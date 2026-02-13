@@ -4,23 +4,31 @@ mod ui;
 mod utils;
 
 use eframe::egui;
+use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 
 use crate::utils::{AnalysisResult, WorkerCommand, WorkerMessage};
 
-const CONFIG_FILE: &str = ".perplex_model_config";
+const CONFIG_FILE_NAME: &str = ".perplex_model_config";
+
+fn config_file_path() -> PathBuf {
+    let home = env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    home.join(CONFIG_FILE_NAME)
+}
 
 fn save_model_path(path: &str) {
-    if let Err(e) = fs::write(CONFIG_FILE, path) {
+    if let Err(e) = fs::write(config_file_path(), path) {
         log::warn!("Failed to save model path: {}", e);
     }
 }
 
 fn load_last_model_path() -> Option<String> {
-    if let Ok(path) = fs::read_to_string(CONFIG_FILE) {
+    if let Ok(path) = fs::read_to_string(config_file_path()) {
         let path = path.trim().to_string();
         if Path::new(&path).exists() {
             return Some(path);
@@ -196,13 +204,9 @@ impl eframe::App for PerplexApp {
                     self.select_model();
                 }
 
-               
-               
                 let available = ui.available_height();
                 let has_results = self.analysis_result.is_some();
 
-               
-               
                 let input_height = if has_results {
                     (available * 0.35).max(120.0)
                 } else {
