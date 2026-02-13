@@ -23,6 +23,14 @@ fn themed(visuals: &Visuals, dark: Color32, light: Color32) -> Color32 {
     }
 }
 
+pub fn secondary_bg(visuals: &Visuals) -> Color32 {
+    themed(
+        visuals,
+        Color32::from_rgb(50, 50, 50),
+        Color32::from_rgb(210, 210, 210),
+    )
+}
+
 pub fn text_primary(visuals: &Visuals) -> Color32 {
     themed(
         visuals,

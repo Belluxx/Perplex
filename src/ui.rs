@@ -266,7 +266,7 @@ fn render_single_token(ui: &mut Ui, token: &AnalyzedToken) {
                 RichText::new(token.text.clone())
                     .strong()
                     .monospace()
-                    .background_color(colors::TEXT_DARK),
+                    .background_color(colors::secondary_bg(ui.visuals())),
             );
             ui.label(RichText::new(format!("(Rank: {})", token.rank)));
         });
