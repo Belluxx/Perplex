@@ -177,7 +177,7 @@ pub fn render_results(ui: &mut Ui, result: &AnalysisResult, height: f32) {
                 .color(colors::WARNING)
                 .size(12.0),
         )
-        .on_hover_text("Perplexity (lower means less predictable by the model)");
+        .on_hover_text("Perplexity (lower means MORE predictable by the model)");
     });
 
     ui.add_space(12.0);
