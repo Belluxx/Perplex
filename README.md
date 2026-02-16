@@ -4,7 +4,11 @@ This offline tool allows you to analyze a given text and see how "surprising" it
 
 This is based on the awesome work by the [llama.cpp](https://github.com/ggml-org/llama.cpp) team, so you will need to specify yout `.gguf` file to use it.
 
-![Dark theme](./static/dark.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./static/dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="./static/light.png">
+  <img alt="Shows a black logo in light color mode and a white one in dark color mode." src="./static/light.png">
+</picture>
 
 ## Usage
 
