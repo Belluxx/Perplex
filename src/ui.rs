@@ -165,14 +165,6 @@ pub fn render_results(ui: &mut Ui, result: &AnalysisResult, height: f32) {
 
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new("📊 Analysis Results")
-                .size(16.0)
-                .color(colors::text_primary(ui.visuals())),
-        );
-
-        ui.add_space(20.0);
-
-        ui.label(
             RichText::new(format!("⏱ {}s", result.processing_time_ms / 1000))
                 .color(colors::text_muted(ui.visuals()))
                 .size(12.0),
