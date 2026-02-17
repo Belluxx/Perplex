@@ -62,16 +62,38 @@ pub fn render_model_panel(ui: &mut Ui, has_model: bool) -> bool {
     clicked
 }
 
-pub fn render_text_input(ui: &mut Ui, text: &mut String, enabled: bool, height: f32) {
+pub fn render_text_input(
+    ui: &mut Ui,
+    text: &mut String,
+    enabled: bool,
+    height: f32,
+    token_count: Option<usize>,
+) -> bool {
     ui.add_space(12.0);
-    ui.label(
-        RichText::new("📝 Input Text")
-            .size(16.0)
-            .color(colors::text_primary(ui.visuals())),
-    );
+
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("📝 Input Text")
+                .size(16.0)
+                .color(colors::text_primary(ui.visuals())),
+        );
+
+        if let Some(count) = token_count {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!("{} tokens", count))
+                        .color(colors::text_muted(ui.visuals()))
+                        .size(12.0),
+                );
+            });
+        }
+    });
+
     ui.add_space(4.0);
 
     let scroll_height = (height - 40.0).max(80.0);
+    let mut changed = false;
+
     egui::ScrollArea::vertical()
         .id_salt("text_input_scroll")
         .max_height(scroll_height)
@@ -83,8 +105,13 @@ pub fn render_text_input(ui: &mut Ui, text: &mut String, enabled: bool, height: 
                 .hint_text("Paste your text here to analyze its perplexity...")
                 .interactive(enabled);
 
-            ui.add(text_edit);
+            let response = ui.add(text_edit);
+            if response.changed() {
+                changed = true;
+            }
         });
+
+    changed
 }
 
 pub fn render_controls(

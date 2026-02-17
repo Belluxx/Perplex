@@ -242,8 +242,17 @@ impl LlamaAnalyzer {
             .take(5)
             .map(|(id, l)| (*id, (l - max_logit).exp() / sum_exp))
             .collect();
-
         (rank, probability, top_preds)
+    }
+
+    pub fn count_tokens(&self, text: &str) -> usize {
+        match self
+            .model
+            .str_to_token(text, llama_cpp_2::model::AddBos::Never)
+        {
+            Ok(tokens) => tokens.len(),
+            Err(_) => 0,
+        }
     }
 }
 
@@ -279,6 +288,10 @@ pub fn run_analysis_worker(
                         let _ = msg_tx.send(WorkerMessage::Error(e));
                     }
                 }
+            }
+            Ok(WorkerCommand::Tokenize(text)) => {
+                let count = analyzer.count_tokens(&text);
+                let _ = msg_tx.send(WorkerMessage::TokenCount(count));
             }
             Ok(WorkerCommand::Shutdown) => {
                 log::info!("Worker received shutdown command");

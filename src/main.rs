@@ -52,6 +52,8 @@ struct PerplexApp {
 
     progress: Option<f32>,
 
+    token_count: Option<usize>,
+
     worker_tx: Option<mpsc::Sender<WorkerCommand>>,
 
     worker_rx: Option<mpsc::Receiver<WorkerMessage>>,
@@ -69,6 +71,7 @@ impl Default for PerplexApp {
             is_loading_model: false,
             is_analyzing: false,
             progress: None,
+            token_count: None,
             worker_tx: None,
             worker_rx: None,
             worker_handle: None,
@@ -152,6 +155,9 @@ impl PerplexApp {
                     WorkerMessage::Progress { current, total } => {
                         self.progress = Some(current as f32 / total.max(1) as f32);
                     }
+                    WorkerMessage::TokenCount(count) => {
+                        self.token_count = Some(count);
+                    }
                     WorkerMessage::Completed(result) => {
                         self.analysis_result = Some(result);
                         self.is_analyzing = false;
@@ -213,7 +219,17 @@ impl eframe::App for PerplexApp {
                     (available * 0.4).max(150.0)
                 };
 
-                ui::render_text_input(ui, &mut self.input_text, !self.is_analyzing, input_height);
+                if ui::render_text_input(
+                    ui,
+                    &mut self.input_text,
+                    !self.is_analyzing,
+                    input_height,
+                    self.token_count,
+                ) {
+                    if let Some(ref tx) = self.worker_tx {
+                        let _ = tx.send(WorkerCommand::Tokenize(self.input_text.clone()));
+                    }
+                }
 
                 if ui::render_controls(ui, self.can_analyze(), self.is_analyzing, self.progress) {
                     self.start_analysis();

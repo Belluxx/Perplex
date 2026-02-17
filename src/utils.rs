@@ -88,12 +88,14 @@ pub enum WorkerMessage {
     Started,
     Progress { current: usize, total: usize },
     Completed(AnalysisResult),
+    TokenCount(usize),
     Error(String),
 }
 
 #[derive(Debug)]
 pub enum WorkerCommand {
     Analyze(String),
+    Tokenize(String),
     Shutdown,
 }
 
