@@ -80,6 +80,16 @@ impl AnalysisResult {
 
         (sum_log_probs / tokens_scored.len() as f32).exp()
     }
+
+    pub fn text_entropy(&self) -> f32 {
+        if self.tokens.len() <= 1 {
+            return 0.0;
+        }
+
+        let ppl = self.perplexity();
+        let n = self.tokens.len() as f32;
+        n * ppl.log2()
+    }
 }
 
 #[derive(Debug)]
