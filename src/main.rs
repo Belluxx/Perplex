@@ -1,7 +1,8 @@
 mod colors;
 mod llamacpp;
 mod settings;
-mod ui;
+mod ui_main;
+mod ui_settings;
 mod utils;
 
 use eframe::egui;
@@ -14,6 +15,8 @@ use crate::utils::{AnalysisResult, WorkerCommand, WorkerMessage};
 
 struct PerplexApp {
     settings: Settings,
+    show_settings: bool,
+    settings_path_buffer: String,
 
     input_text: String,
 
@@ -40,6 +43,8 @@ impl Default for PerplexApp {
     fn default() -> Self {
         Self {
             settings: Settings::default(),
+            show_settings: false,
+            settings_path_buffer: String::new(),
             input_text: String::new(),
             analysis_result: None,
             error_message: None,
@@ -179,15 +184,20 @@ impl eframe::App for PerplexApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::Frame::none().inner_margin(20.0).show(ui, |ui| {
-                ui::render_header(
+                if ui_main::render_header(
                     ui,
                     self.settings.model_path.as_deref(),
                     self.is_loading_model,
-                );
+                ) {
+                    self.show_settings = true;
+                    // Initialize buffer with current path when opening
+                    self.settings_path_buffer =
+                        self.settings.model_path.clone().unwrap_or_default();
+                }
 
                 ui.add_space(12.0);
 
-                if ui::render_model_panel(ui, self.settings.model_path.is_some()) {
+                if ui_main::render_model_panel(ui, self.settings.model_path.is_some()) {
                     self.select_model();
                 }
 
@@ -200,7 +210,7 @@ impl eframe::App for PerplexApp {
                     (available * 0.4).max(150.0)
                 };
 
-                if ui::render_text_input(
+                if ui_main::render_text_input(
                     ui,
                     &mut self.input_text,
                     !self.is_analyzing,
@@ -212,22 +222,63 @@ impl eframe::App for PerplexApp {
                     }
                 }
 
-                if ui::render_controls(ui, self.can_analyze(), self.is_analyzing, self.progress) {
+                if ui_main::render_controls(
+                    ui,
+                    self.can_analyze(),
+                    self.is_analyzing,
+                    self.progress,
+                ) {
                     self.start_analysis();
                 }
 
                 if let Some(ref error) = self.error_message {
-                    ui::render_error(ui, error);
+                    ui_main::render_error(ui, error);
                 }
 
                 if let Some(ref result) = self.analysis_result {
                     let results_height = ui.available_height();
-                    ui::render_results(ui, result, results_height);
+                    ui_main::render_results(ui, result, results_height);
                 } else if !self.is_analyzing {
-                    ui::render_empty_state(ui, self.settings.model_path.is_some());
+                    ui_main::render_empty_state(ui, self.settings.model_path.is_some());
                 }
             });
         });
+
+        if self.show_settings {
+            if let Some(action) = ui_settings::render_settings_window(
+                ctx,
+                &mut self.show_settings,
+                &mut self.settings_path_buffer,
+            ) {
+                match action {
+                    ui_settings::SettingsAction::Browse => {
+                        let file = rfd::FileDialog::new()
+                            .add_filter("GGUF Model", &["gguf"])
+                            .set_title("Select a GGUF Model")
+                            .pick_file();
+
+                        if let Some(path) = file {
+                            self.settings_path_buffer = path.to_string_lossy().to_string();
+                        }
+                    }
+                    ui_settings::SettingsAction::Save => {
+                        if !self.settings_path_buffer.is_empty() {
+                            self.load_model(self.settings_path_buffer.clone());
+                        } else {
+                            // Similar to clear logic but via save empty
+                            self.settings.model_path = None;
+                            let _ = self.settings.save();
+                            self.shutdown_worker();
+                            self.analysis_result = None;
+                            self.token_count = None;
+                        }
+                    }
+                    ui_settings::SettingsAction::Clear => {
+                        self.settings_path_buffer.clear();
+                    }
+                }
+            }
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

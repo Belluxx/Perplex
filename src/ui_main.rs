@@ -2,7 +2,8 @@ use crate::colors;
 use crate::utils::{AnalysisResult, AnalyzedToken};
 use egui::{Color32, FontId, RichText, Ui, Vec2};
 
-pub fn render_header(ui: &mut Ui, model_path: Option<&str>, is_loading: bool) {
+pub fn render_header(ui: &mut Ui, model_path: Option<&str>, is_loading: bool) -> bool {
+    let mut settings_clicked = false;
     ui.horizontal(|ui| {
         ui.heading(
             RichText::new("🔮 Perplex")
@@ -28,10 +29,20 @@ pub fn render_header(ui: &mut Ui, model_path: Option<&str>, is_loading: bool) {
         } else {
             ui.label(RichText::new("❌ No model loaded").color(colors::text_muted(ui.visuals())));
         }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add(egui::Button::new(RichText::new("⚙").size(18.0)))
+                .clicked()
+            {
+                settings_clicked = true;
+            }
+        });
     });
 
     ui.add_space(8.0);
     ui.separator();
+    settings_clicked
 }
 
 pub fn render_model_panel(ui: &mut Ui, has_model: bool) -> bool {
