@@ -17,25 +17,15 @@ struct PerplexApp {
     settings: Settings,
     show_settings: bool,
     settings_path_buffer: String,
-
     input_text: String,
-
     analysis_result: Option<AnalysisResult>,
-
     error_message: Option<String>,
-
     is_loading_model: bool,
-
     is_analyzing: bool,
-
     progress: Option<f32>,
-
     token_count: Option<usize>,
-
     worker_tx: Option<mpsc::Sender<WorkerCommand>>,
-
     worker_rx: Option<mpsc::Receiver<WorkerMessage>>,
-
     worker_handle: Option<thread::JoinHandle<()>>,
 }
 
