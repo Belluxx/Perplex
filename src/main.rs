@@ -1,44 +1,19 @@
 mod colors;
 mod llamacpp;
+mod settings;
 mod ui;
 mod utils;
 
 use eframe::egui;
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
+
 use std::sync::mpsc;
 use std::thread;
 
+use crate::settings::Settings;
 use crate::utils::{AnalysisResult, WorkerCommand, WorkerMessage};
 
-const CONFIG_FILE_NAME: &str = ".perplex_model_config";
-
-fn config_file_path() -> PathBuf {
-    let home = env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."));
-    home.join(CONFIG_FILE_NAME)
-}
-
-fn save_model_path(path: &str) {
-    if let Err(e) = fs::write(config_file_path(), path) {
-        log::warn!("Failed to save model path: {}", e);
-    }
-}
-
-fn load_last_model_path() -> Option<String> {
-    if let Ok(path) = fs::read_to_string(config_file_path()) {
-        let path = path.trim().to_string();
-        if Path::new(&path).exists() {
-            return Some(path);
-        }
-    }
-    None
-}
-
 struct PerplexApp {
-    model_path: Option<String>,
+    settings: Settings,
 
     input_text: String,
 
@@ -64,7 +39,7 @@ struct PerplexApp {
 impl Default for PerplexApp {
     fn default() -> Self {
         Self {
-            model_path: None,
+            settings: Settings::default(),
             input_text: String::new(),
             analysis_result: None,
             error_message: None,
@@ -84,7 +59,9 @@ impl PerplexApp {
         let _ = env_logger::try_init();
 
         let mut app = Self::default();
-        if let Some(path) = load_last_model_path() {
+        app.settings = Settings::load();
+
+        if let Some(path) = app.settings.model_path.clone() {
             app.load_model(path);
         }
         app
@@ -103,7 +80,10 @@ impl PerplexApp {
     }
 
     fn load_model(&mut self, path: String) {
-        save_model_path(&path);
+        self.settings.model_path = Some(path.clone());
+        if let Err(e) = self.settings.save() {
+            log::warn!("Failed to save settings: {}", e);
+        }
         self.shutdown_worker();
 
         self.is_loading_model = true;
@@ -116,11 +96,8 @@ impl PerplexApp {
         self.worker_tx = Some(cmd_tx);
         self.worker_rx = Some(msg_rx);
 
-        let model_path = path.clone();
-        self.model_path = Some(path);
-
         let handle = thread::spawn(move || {
-            llamacpp::run_analysis_worker(model_path, cmd_rx, msg_tx);
+            llamacpp::run_analysis_worker(path, cmd_rx, msg_tx);
         });
 
         self.worker_handle = Some(handle);
@@ -185,7 +162,7 @@ impl PerplexApp {
     }
 
     fn can_analyze(&self) -> bool {
-        self.model_path.is_some()
+        self.settings.model_path.is_some()
             && !self.input_text.is_empty()
             && !self.is_loading_model
             && self.worker_tx.is_some()
@@ -202,11 +179,15 @@ impl eframe::App for PerplexApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::Frame::none().inner_margin(20.0).show(ui, |ui| {
-                ui::render_header(ui, self.model_path.as_deref(), self.is_loading_model);
+                ui::render_header(
+                    ui,
+                    self.settings.model_path.as_deref(),
+                    self.is_loading_model,
+                );
 
                 ui.add_space(12.0);
 
-                if ui::render_model_panel(ui, self.model_path.is_some()) {
+                if ui::render_model_panel(ui, self.settings.model_path.is_some()) {
                     self.select_model();
                 }
 
@@ -243,7 +224,7 @@ impl eframe::App for PerplexApp {
                     let results_height = ui.available_height();
                     ui::render_results(ui, result, results_height);
                 } else if !self.is_analyzing {
-                    ui::render_empty_state(ui, self.model_path.is_some());
+                    ui::render_empty_state(ui, self.settings.model_path.is_some());
                 }
             });
         });
