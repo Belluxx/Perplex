@@ -173,7 +173,7 @@ pub fn render_results(ui: &mut Ui, result: &AnalysisResult, height: f32) {
         ui.add_space(10.0);
 
         ui.label(
-            RichText::new(format!("❓ Perplexity: {:.1}", result.perplexity()))
+            RichText::new(format!("❓ Perplexity: {:.2}", result.perplexity()))
                 .color(colors::WARNING)
                 .size(12.0),
         )

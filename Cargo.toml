@@ -3,7 +3,7 @@ name = "perplex"
 version = "0.1.0"
 edition = "2021"
 description = "A desktop GUI application for analyzing text perplexity using local LLMs"
-authors = ["Pietro"]
+authors = ["Belluxx"]
 
 [dependencies]
 eframe = "0.30"
