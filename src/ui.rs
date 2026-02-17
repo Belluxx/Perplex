@@ -200,20 +200,20 @@ pub fn render_results(ui: &mut Ui, result: &AnalysisResult, height: f32) {
         ui.add_space(10.0);
 
         ui.label(
-            RichText::new(format!("❓ Perplexity: {:.2}", result.perplexity()))
-                .color(colors::WARNING)
-                .size(12.0),
-        )
-        .on_hover_text("Perplexity (lower means MORE predictable by the model)");
-
-        ui.add_space(10.0);
-
-        ui.label(
             RichText::new(format!("🌀 Entropy: {:.0} bits", result.text_entropy()))
                 .color(colors::ACCENT_PRIMARY)
                 .size(12.0),
         )
         .on_hover_text("How much information is needed to reconstruct the text using this model");
+
+        ui.add_space(10.0);
+
+        ui.label(
+            RichText::new(format!("❓ Perplexity: {:.2}", result.perplexity()))
+                .color(colors::WARNING)
+                .size(12.0),
+        )
+        .on_hover_text("Perplexity (lower means MORE predictable by the model)");
     });
 
     ui.add_space(12.0);
