@@ -12,9 +12,6 @@ pub const WARNING: Color32 = Color32::from_rgb(204, 152, 88);
 pub const ERROR: Color32 = Color32::from_rgb(205, 115, 115);
 pub const INFO: Color32 = Color32::from_rgb(124, 156, 191);
 
-pub const TEXT_DARK: Color32 = Color32::from_rgb(38, 40, 45);
-pub const TEXT_WHITE: Color32 = Color32::from_rgb(248, 249, 252);
-
 fn themed(visuals: &Visuals, dark: Color32, light: Color32) -> Color32 {
     if visuals.dark_mode {
         dark

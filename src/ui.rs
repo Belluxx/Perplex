@@ -276,11 +276,7 @@ fn render_analyzed_tokens(ui: &mut Ui, tokens: &[AnalyzedToken]) {
 fn render_single_token(ui: &mut Ui, token: &AnalyzedToken) {
     let bg_color = token.get_color();
 
-    let text_color = if is_light_color(bg_color) {
-        colors::TEXT_DARK
-    } else {
-        colors::TEXT_WHITE
-    };
+    let text_color = Color32::BLACK;
 
     let response = ui.add(
         egui::Label::new(
@@ -326,11 +322,6 @@ fn render_single_token(ui: &mut Ui, token: &AnalyzedToken) {
             }
         }
     });
-}
-
-fn is_light_color(color: Color32) -> bool {
-    let luminance = 0.299 * color.r() as f32 + 0.587 * color.g() as f32 + 0.114 * color.b() as f32;
-    luminance > 128.0
 }
 
 pub fn render_empty_state(ui: &mut Ui, has_model: bool) {
