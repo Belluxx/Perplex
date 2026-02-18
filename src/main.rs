@@ -84,6 +84,7 @@ impl PerplexApp {
         self.is_loading_model = true;
         self.error_message = None;
         self.analysis_result = None;
+        self.token_count = None;
 
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (msg_tx, msg_rx) = mpsc::channel();
@@ -119,6 +120,11 @@ impl PerplexApp {
                     WorkerMessage::ModelLoaded => {
                         self.is_loading_model = false;
                         log::info!("Model loaded and ready");
+                        if !self.input_text.is_empty() {
+                            if let Some(ref tx) = self.worker_tx {
+                                let _ = tx.send(WorkerCommand::Tokenize(self.input_text.clone()));
+                            }
+                        }
                     }
                     WorkerMessage::Started => {
                         self.is_analyzing = true;
