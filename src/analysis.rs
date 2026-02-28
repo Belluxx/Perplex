@@ -1,11 +1,6 @@
-use crate::colors;
-use egui::Color32;
-
 #[derive(Clone, Debug)]
 pub struct AnalyzedToken {
-    #[allow(dead_code)]
     pub text: String,
-    pub display_text: String,
     pub rank: usize,
     pub top_predictions: Vec<(String, f32)>,
     pub probability: f32,
@@ -18,18 +13,12 @@ impl AnalyzedToken {
         top_predictions: Vec<(String, f32)>,
         probability: f32,
     ) -> Self {
-        let display_text = text.replace('\n', "↵\n").replace('\t', "→");
         Self {
             text,
-            display_text,
             rank,
             top_predictions,
             probability,
         }
-    }
-
-    pub fn get_color(&self) -> Color32 {
-        colors::rank_to_color(self.rank)
     }
 }
 
@@ -47,45 +36,48 @@ impl AnalysisResult {
         }
     }
 
-    pub fn average_rank(&self) -> f32 {
+    /// Returns all tokens except the first (which has no prediction).
+    fn scored_tokens(&self) -> &[AnalyzedToken] {
         if self.tokens.len() <= 1 {
+            &[]
+        } else {
+            &self.tokens[1..]
+        }
+    }
+
+    pub fn average_rank(&self) -> f32 {
+        let scored = self.scored_tokens();
+        if scored.is_empty() {
             return 0.0;
         }
-
-        let tokens_scored = &self.tokens[1..];
-        let sum: usize = tokens_scored.iter().map(|t| t.rank).sum();
-        sum as f32 / tokens_scored.len() as f32
+        let sum: usize = scored.iter().map(|t| t.rank).sum();
+        sum as f32 / scored.len() as f32
     }
 
     pub fn exact_prediction_percentage(&self) -> f32 {
-        if self.tokens.len() <= 1 {
+        let scored = self.scored_tokens();
+        if scored.is_empty() {
             return 0.0;
         }
-
-        let tokens_scored = &self.tokens[1..];
-        let exact = tokens_scored.iter().filter(|t| t.rank == 1).count();
-        (exact as f32 / tokens_scored.len() as f32) * 100.0
+        let exact = scored.iter().filter(|t| t.rank == 1).count();
+        (exact as f32 / scored.len() as f32) * 100.0
     }
 
     // Perplexity is the exponential of the average negative log-likelihood per token.
     // Formula: exp( - (1/N) * Σ ln(P(word_i)) )
     pub fn perplexity(&self) -> f32 {
-        if self.tokens.len() <= 1 {
+        let scored = self.scored_tokens();
+        if scored.is_empty() {
             return 0.0;
         }
-
-        let tokens_scored = &self.tokens[1..];
-
-        let sum_log_probs: f32 = tokens_scored.iter().map(|t| -t.probability.ln()).sum();
-
-        (sum_log_probs / tokens_scored.len() as f32).exp()
+        let sum_log_probs: f32 = scored.iter().map(|t| -t.probability.ln()).sum();
+        (sum_log_probs / scored.len() as f32).exp()
     }
 
     pub fn text_entropy(&self) -> f32 {
-        if self.tokens.len() <= 1 {
+        if self.scored_tokens().is_empty() {
             return 0.0;
         }
-
         let ppl = self.perplexity();
         let n = self.tokens.len() as f32;
         n * ppl.log2()

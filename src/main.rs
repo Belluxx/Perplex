@@ -51,14 +51,8 @@ impl PerplexApp {
     }
 
     fn select_model(&mut self) {
-        let file = rfd::FileDialog::new()
-            .add_filter("GGUF Model", &["gguf"])
-            .set_title("Select a GGUF Model")
-            .pick_file();
-
-        if let Some(path) = file {
-            let path_str = path.to_string_lossy().to_string();
-            self.load_model(path_str);
+        if let Some(path) = pick_gguf_model() {
+            self.load_model(path);
         }
     }
 
@@ -197,13 +191,8 @@ impl eframe::App for PerplexApp {
             ) {
                 match action {
                     ui_settings::SettingsAction::Browse => {
-                        let file = rfd::FileDialog::new()
-                            .add_filter("GGUF Model", &["gguf"])
-                            .set_title("Select a GGUF Model")
-                            .pick_file();
-
-                        if let Some(path) = file {
-                            self.settings_path_buffer = path.to_string_lossy().to_string();
+                        if let Some(path) = pick_gguf_model() {
+                            self.settings_path_buffer = path;
                         }
                     }
                     ui_settings::SettingsAction::Save => {
@@ -229,6 +218,14 @@ impl eframe::App for PerplexApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.worker.shutdown();
     }
+}
+
+fn pick_gguf_model() -> Option<String> {
+    rfd::FileDialog::new()
+        .add_filter("GGUF Model", &["gguf"])
+        .set_title("Select a GGUF Model")
+        .pick_file()
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 fn main() -> eframe::Result<()> {

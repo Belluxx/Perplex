@@ -277,13 +277,14 @@ fn render_analyzed_tokens(ui: &mut Ui, tokens: &[AnalyzedToken]) {
 }
 
 fn render_single_token(ui: &mut Ui, token: &AnalyzedToken) {
-    let bg_color = token.get_color();
+    let bg_color = colors::rank_to_color(token.rank);
+    let display_text = token.text.replace('\n', "↵\n").replace('\t', "→");
 
     let text_color = Color32::BLACK;
 
     let response = ui.add(
         egui::Label::new(
-            RichText::new(&token.display_text)
+            RichText::new(&display_text)
                 .color(text_color)
                 .background_color(bg_color)
                 .size(14.0)
