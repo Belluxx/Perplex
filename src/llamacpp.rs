@@ -7,7 +7,8 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::mpsc;
 
-use crate::utils::{AnalysisResult, AnalyzedToken, WorkerCommand, WorkerMessage};
+use crate::analysis::{AnalysisResult, AnalyzedToken};
+use crate::worker::{WorkerCommand, WorkerMessage};
 
 pub struct LlamaAnalyzer {
     model: LlamaModel,

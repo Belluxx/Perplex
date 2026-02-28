@@ -1,5 +1,5 @@
+use crate::analysis::{AnalysisResult, AnalyzedToken};
 use crate::colors;
-use crate::utils::{AnalysisResult, AnalyzedToken};
 use egui::{Color32, FontId, RichText, Ui, Vec2};
 
 pub fn render_header(ui: &mut Ui, model_path: Option<&str>, is_loading: bool) -> bool {

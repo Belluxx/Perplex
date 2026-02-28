@@ -92,23 +92,6 @@ impl AnalysisResult {
     }
 }
 
-#[derive(Debug)]
-pub enum WorkerMessage {
-    ModelLoaded,
-    Started,
-    Progress { current: usize, total: usize },
-    Completed(AnalysisResult),
-    TokenCount(usize),
-    Error(String),
-}
-
-#[derive(Debug)]
-pub enum WorkerCommand {
-    Analyze(String),
-    Tokenize(String),
-    Shutdown,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

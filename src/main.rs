@@ -1,32 +1,25 @@
+mod analysis;
 mod colors;
 mod llamacpp;
 mod settings;
 mod ui_main;
 mod ui_settings;
-mod utils;
+mod worker;
 
 use eframe::egui;
 
-use std::sync::mpsc;
-use std::thread;
-
 use crate::settings::Settings;
-use crate::utils::{AnalysisResult, WorkerCommand, WorkerMessage};
+use crate::worker::{WorkerCommand, WorkerManager, WorkerMessage};
 
 struct PerplexApp {
     settings: Settings,
     show_settings: bool,
     settings_path_buffer: String,
     input_text: String,
-    analysis_result: Option<AnalysisResult>,
+    analysis_result: Option<analysis::AnalysisResult>,
     error_message: Option<String>,
-    is_loading_model: bool,
-    is_analyzing: bool,
-    progress: Option<f32>,
     token_count: Option<usize>,
-    worker_tx: Option<mpsc::Sender<WorkerCommand>>,
-    worker_rx: Option<mpsc::Receiver<WorkerMessage>>,
-    worker_handle: Option<thread::JoinHandle<()>>,
+    worker: WorkerManager,
 }
 
 impl Default for PerplexApp {
@@ -38,13 +31,8 @@ impl Default for PerplexApp {
             input_text: String::new(),
             analysis_result: None,
             error_message: None,
-            is_loading_model: false,
-            is_analyzing: false,
-            progress: None,
             token_count: None,
-            worker_tx: None,
-            worker_rx: None,
-            worker_handle: None,
+            worker: WorkerManager::default(),
         }
     }
 }
@@ -79,94 +67,55 @@ impl PerplexApp {
         if let Err(e) = self.settings.save() {
             log::warn!("Failed to save settings: {}", e);
         }
-        self.shutdown_worker();
 
-        self.is_loading_model = true;
         self.error_message = None;
         self.analysis_result = None;
         self.token_count = None;
 
-        let (cmd_tx, cmd_rx) = mpsc::channel();
-        let (msg_tx, msg_rx) = mpsc::channel();
-
-        self.worker_tx = Some(cmd_tx);
-        self.worker_rx = Some(msg_rx);
-
-        let handle = thread::spawn(move || {
-            llamacpp::run_analysis_worker(path, cmd_rx, msg_tx);
-        });
-
-        self.worker_handle = Some(handle);
+        self.worker.load_model(path);
     }
 
     fn start_analysis(&mut self) {
-        if let Some(ref tx) = self.worker_tx {
-            self.is_analyzing = true;
-            self.progress = Some(0.0);
-            self.error_message = None;
+        let text = self.input_text.clone();
+        self.error_message = None;
 
-            let text = self.input_text.clone();
-            if let Err(e) = tx.send(WorkerCommand::Analyze(text)) {
-                self.error_message = Some(format!("Failed to send command: {}", e));
-                self.is_analyzing = false;
-            }
+        if let Err(e) = self.worker.send_command(WorkerCommand::Analyze(text)) {
+            self.error_message = Some(e);
         }
     }
 
     fn process_worker_messages(&mut self) {
-        if let Some(ref rx) = self.worker_rx {
-            while let Ok(msg) = rx.try_recv() {
-                match msg {
-                    WorkerMessage::ModelLoaded => {
-                        self.is_loading_model = false;
-                        log::info!("Model loaded and ready");
-                        if !self.input_text.is_empty() {
-                            if let Some(ref tx) = self.worker_tx {
-                                let _ = tx.send(WorkerCommand::Tokenize(self.input_text.clone()));
-                            }
-                        }
-                    }
-                    WorkerMessage::Started => {
-                        self.is_analyzing = true;
-                        self.progress = Some(0.0);
-                    }
-                    WorkerMessage::Progress { current, total } => {
-                        self.progress = Some(current as f32 / total.max(1) as f32);
-                    }
-                    WorkerMessage::TokenCount(count) => {
-                        self.token_count = Some(count);
-                    }
-                    WorkerMessage::Completed(result) => {
-                        self.analysis_result = Some(result);
-                        self.is_analyzing = false;
-                        self.progress = None;
-                    }
-                    WorkerMessage::Error(error) => {
-                        self.error_message = Some(error);
-                        self.is_analyzing = false;
-                        self.is_loading_model = false;
-                        self.progress = None;
+        for msg in self.worker.poll_messages() {
+            match msg {
+                WorkerMessage::ModelLoaded => {
+                    log::info!("Model loaded and ready");
+                    if !self.input_text.is_empty() {
+                        let _ = self
+                            .worker
+                            .send_command(WorkerCommand::Tokenize(self.input_text.clone()));
                     }
                 }
+                WorkerMessage::TokenCount(count) => {
+                    self.token_count = Some(count);
+                }
+                WorkerMessage::Completed(result) => {
+                    self.analysis_result = Some(result);
+                }
+                WorkerMessage::Error(error) => {
+                    self.error_message = Some(error);
+                }
+                // Worker-level state (is_loading, is_analyzing, progress) is
+                // already updated inside WorkerManager::poll_messages.
+                WorkerMessage::Started | WorkerMessage::Progress { .. } => {}
             }
         }
-    }
-
-    fn shutdown_worker(&mut self) {
-        if let Some(tx) = self.worker_tx.take() {
-            let _ = tx.send(WorkerCommand::Shutdown);
-        }
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.join();
-        }
-        self.worker_rx = None;
     }
 
     fn can_analyze(&self) -> bool {
         self.settings.model_path.is_some()
             && !self.input_text.is_empty()
-            && !self.is_loading_model
-            && self.worker_tx.is_some()
+            && self.worker.is_ready()
+            && !self.worker.is_analyzing
     }
 }
 
@@ -174,7 +123,7 @@ impl eframe::App for PerplexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_worker_messages();
 
-        if self.is_analyzing || self.is_loading_model {
+        if self.worker.is_analyzing || self.worker.is_loading {
             ctx.request_repaint();
         }
 
@@ -183,7 +132,7 @@ impl eframe::App for PerplexApp {
                 if ui_main::render_header(
                     ui,
                     self.settings.model_path.as_deref(),
-                    self.is_loading_model,
+                    self.worker.is_loading,
                 ) {
                     self.show_settings = true;
                     // Initialize buffer with current path when opening
@@ -209,20 +158,20 @@ impl eframe::App for PerplexApp {
                 if ui_main::render_text_input(
                     ui,
                     &mut self.input_text,
-                    !self.is_analyzing,
+                    !self.worker.is_analyzing,
                     input_height,
                     self.token_count,
                 ) {
-                    if let Some(ref tx) = self.worker_tx {
-                        let _ = tx.send(WorkerCommand::Tokenize(self.input_text.clone()));
-                    }
+                    let _ = self
+                        .worker
+                        .send_command(WorkerCommand::Tokenize(self.input_text.clone()));
                 }
 
                 if ui_main::render_controls(
                     ui,
                     self.can_analyze(),
-                    self.is_analyzing,
-                    self.progress,
+                    self.worker.is_analyzing,
+                    self.worker.progress,
                 ) {
                     self.start_analysis();
                 }
@@ -234,7 +183,7 @@ impl eframe::App for PerplexApp {
                 if let Some(ref result) = self.analysis_result {
                     let results_height = ui.available_height();
                     ui_main::render_results(ui, result, results_height);
-                } else if !self.is_analyzing {
+                } else if !self.worker.is_analyzing {
                     ui_main::render_empty_state(ui, self.settings.model_path.is_some());
                 }
             });
@@ -264,7 +213,7 @@ impl eframe::App for PerplexApp {
                             // Similar to clear logic but via save empty
                             self.settings.model_path = None;
                             let _ = self.settings.save();
-                            self.shutdown_worker();
+                            self.worker.shutdown();
                             self.analysis_result = None;
                             self.token_count = None;
                         }
@@ -278,7 +227,7 @@ impl eframe::App for PerplexApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.shutdown_worker();
+        self.worker.shutdown();
     }
 }
 
