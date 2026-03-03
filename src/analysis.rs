@@ -13,7 +13,6 @@ pub struct AnalysisResult {
 }
 
 impl AnalysisResult {
-    /// Returns all tokens except the first (which has no prediction).
     fn scored_tokens(&self) -> &[AnalyzedToken] {
         if self.tokens.len() <= 1 {
             &[]

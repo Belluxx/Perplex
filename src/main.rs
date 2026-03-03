@@ -351,9 +351,18 @@ fn pick_gguf_model() -> Option<String> {
         .map(|p| p.to_string_lossy().to_string())
 }
 
-/// Extracts the file name from an optional model path.
 pub fn model_name_from_path(path: Option<&str>) -> Option<&str> {
-    path.and_then(|p| std::path::Path::new(p).file_name().and_then(|n| n.to_str()))
+    // Remove final .gguf if present
+    path.and_then(|p| {
+        let path = std::path::Path::new(p);
+        path.file_name().and_then(|n| n.to_str()).and_then(|n| {
+            if n.ends_with(".gguf") {
+                Some(&n[..n.len() - 5])
+            } else {
+                Some(n)
+            }
+        })
+    })
 }
 
 fn main() -> eframe::Result<()> {

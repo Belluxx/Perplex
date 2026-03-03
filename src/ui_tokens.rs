@@ -5,12 +5,10 @@ use egui::{Color32, RichText, Ui, Vec2};
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
-/// Formats a token's text for on-screen display (newlines → ↵, tabs → →).
 fn format_display_text(text: &str) -> String {
     text.replace('\n', "↵\n").replace('\t', "→")
 }
 
-/// Renders a colored token label and returns the hover `Response`.
 fn render_token_label(ui: &mut Ui, display_text: &str, bg_color: Color32) -> egui::Response {
     ui.add(
         egui::Label::new(
@@ -24,7 +22,6 @@ fn render_token_label(ui: &mut Ui, display_text: &str, bg_color: Color32) -> egu
     )
 }
 
-/// Renders the centered token-text header inside a tooltip.
 fn render_tooltip_header(ui: &mut Ui, token_text: &str) {
     ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.label(

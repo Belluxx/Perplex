@@ -40,7 +40,6 @@ impl std::fmt::Display for UnifiedColorMode {
 
 // ── Header ──────────────────────────────────────────────────────────────────
 
-/// Renders the app header. Returns `true` if the settings button was clicked.
 pub fn render_header(
     ui: &mut Ui,
     model_path_a: Option<&str>,
@@ -270,7 +269,6 @@ pub fn render_results(
 
     let both = result_a.is_some() && result_b.is_some();
 
-    // Show view-mode segmented control when both models have results
     if both {
         ui.horizontal(|ui| {
             // Segmented control: Split | Unified
@@ -297,7 +295,6 @@ pub fn render_results(
                 *view_mode = ViewMode::Unified;
             }
 
-            // Show color-mode combo when in Unified mode
             if *view_mode == ViewMode::Unified {
                 ui.add_space(16.0);
                 ui.label(
@@ -452,7 +449,6 @@ fn render_column_header(ui: &mut Ui, label: &str, color: Color32) {
     ui.add_space(6.0);
 }
 
-/// Inline stats bar used in both single and dual views.
 fn render_stats_bar(ui: &mut Ui, result: &AnalysisResult) {
     ui.horizontal_wrapped(|ui| {
         ui.label(
