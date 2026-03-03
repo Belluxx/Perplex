@@ -476,7 +476,7 @@ fn render_stats_bar(ui: &mut Ui, result: &AnalysisResult) {
         ui.add_space(10.0);
 
         ui.label(
-            RichText::new(format!("Entropy: {:.0}b", result.text_entropy()))
+            RichText::new(format!("Entropy: {:.0} bits", result.text_entropy()))
                 .color(colors::ACCENT_PRIMARY)
                 .size(12.0),
         )
