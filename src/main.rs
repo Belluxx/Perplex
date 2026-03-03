@@ -14,12 +14,15 @@ use crate::worker::{WorkerCommand, WorkerManager, WorkerMessage};
 struct PerplexApp {
     settings: Settings,
     show_settings: bool,
-    settings_path_buffer: String,
+    settings_path_buffer_a: String,
+    settings_path_buffer_b: String,
     input_text: String,
-    analysis_result: Option<analysis::AnalysisResult>,
+    result_a: Option<analysis::AnalysisResult>,
+    result_b: Option<analysis::AnalysisResult>,
     error_message: Option<String>,
     token_count: Option<usize>,
-    worker: WorkerManager,
+    worker_a: WorkerManager,
+    worker_b: WorkerManager,
 }
 
 impl Default for PerplexApp {
@@ -27,12 +30,15 @@ impl Default for PerplexApp {
         Self {
             settings: Settings::default(),
             show_settings: false,
-            settings_path_buffer: String::new(),
+            settings_path_buffer_a: String::new(),
+            settings_path_buffer_b: String::new(),
             input_text: String::new(),
-            analysis_result: None,
+            result_a: None,
+            result_b: None,
             error_message: None,
             token_count: None,
-            worker: WorkerManager::default(),
+            worker_a: WorkerManager::default(),
+            worker_b: WorkerManager::default(),
         }
     }
 }
@@ -44,48 +50,99 @@ impl PerplexApp {
         let mut app = Self::default();
         app.settings = Settings::load();
 
-        if let Some(path) = app.settings.model_path.clone() {
-            app.load_model(path);
+        if let Some(path) = app.settings.model_path_a.clone() {
+            app.load_model_a(path);
+        }
+        if let Some(path) = app.settings.model_path_b.clone() {
+            app.load_model_b(path);
         }
         app
     }
 
-    fn select_model(&mut self) {
+    fn select_model_a(&mut self) {
         if let Some(path) = pick_gguf_model() {
-            self.load_model(path);
+            self.load_model_a(path);
         }
     }
 
-    fn load_model(&mut self, path: String) {
-        self.settings.model_path = Some(path.clone());
+    fn select_model_b(&mut self) {
+        if let Some(path) = pick_gguf_model() {
+            self.load_model_b(path);
+        }
+    }
+
+    fn load_model_a(&mut self, path: String) {
+        self.settings.model_path_a = Some(path.clone());
+        self.save_settings();
+        self.error_message = None;
+        self.result_a = None;
+        self.worker_a.load_model(path);
+    }
+
+    fn load_model_b(&mut self, path: String) {
+        self.settings.model_path_b = Some(path.clone());
+        self.save_settings();
+        self.error_message = None;
+        self.result_b = None;
+        self.worker_b.load_model(path);
+    }
+
+    fn clear_model_a(&mut self) {
+        self.settings.model_path_a = None;
+        self.save_settings();
+        self.worker_a.shutdown();
+        self.result_a = None;
+    }
+
+    fn clear_model_b(&mut self) {
+        self.settings.model_path_b = None;
+        self.save_settings();
+        self.worker_b.shutdown();
+        self.result_b = None;
+    }
+
+    fn save_settings(&self) {
         if let Err(e) = self.settings.save() {
             log::warn!("Failed to save settings: {}", e);
         }
+    }
 
-        self.error_message = None;
-        self.analysis_result = None;
-        self.token_count = None;
-
-        self.worker.load_model(path);
+    fn append_error(&mut self, msg: String) {
+        if let Some(ref mut existing) = self.error_message {
+            existing.push('\n');
+            existing.push_str(&msg);
+        } else {
+            self.error_message = Some(msg);
+        }
     }
 
     fn start_analysis(&mut self) {
         let text = self.input_text.clone();
         self.error_message = None;
 
-        if let Err(e) = self.worker.send_command(WorkerCommand::Analyze(text)) {
-            self.error_message = Some(e);
+        if self.worker_a.is_ready() {
+            if let Err(e) = self
+                .worker_a
+                .send_command(WorkerCommand::Analyze(text.clone()))
+            {
+                self.append_error(format!("Model A: {}", e));
+            }
+        }
+        if self.worker_b.is_ready() {
+            if let Err(e) = self.worker_b.send_command(WorkerCommand::Analyze(text)) {
+                self.append_error(format!("Model B: {}", e));
+            }
         }
     }
 
     fn process_worker_messages(&mut self) {
-        for msg in self.worker.poll_messages() {
+        for msg in self.worker_a.poll_messages() {
             match msg {
                 WorkerMessage::ModelLoaded => {
-                    log::info!("Model loaded and ready");
+                    log::info!("Model A loaded and ready");
                     if !self.input_text.is_empty() {
                         let _ = self
-                            .worker
+                            .worker_a
                             .send_command(WorkerCommand::Tokenize(self.input_text.clone()));
                     }
                 }
@@ -93,23 +150,49 @@ impl PerplexApp {
                     self.token_count = Some(count);
                 }
                 WorkerMessage::Completed(result) => {
-                    self.analysis_result = Some(result);
+                    self.result_a = Some(result);
                 }
                 WorkerMessage::Error(error) => {
-                    self.error_message = Some(error);
+                    self.append_error(format!("Model A: {}", error));
                 }
-                // Worker-level state (is_loading, is_analyzing, progress) is
-                // already updated inside WorkerManager::poll_messages.
                 WorkerMessage::Started | WorkerMessage::Progress { .. } => {}
+            }
+        }
+
+        for msg in self.worker_b.poll_messages() {
+            match msg {
+                WorkerMessage::ModelLoaded => {
+                    log::info!("Model B loaded and ready");
+                }
+                WorkerMessage::Completed(result) => {
+                    self.result_b = Some(result);
+                }
+                WorkerMessage::Error(error) => {
+                    self.append_error(format!("Model B: {}", error));
+                }
+                WorkerMessage::TokenCount(_)
+                | WorkerMessage::Started
+                | WorkerMessage::Progress { .. } => {}
             }
         }
     }
 
     fn can_analyze(&self) -> bool {
-        self.settings.model_path.is_some()
-            && !self.input_text.is_empty()
-            && self.worker.is_ready()
-            && !self.worker.is_analyzing
+        let any_ready = self.worker_a.is_ready() || self.worker_b.is_ready();
+        let any_analyzing = self.worker_a.is_analyzing || self.worker_b.is_analyzing;
+        any_ready && !self.input_text.is_empty() && !any_analyzing
+    }
+
+    fn is_analyzing(&self) -> bool {
+        self.worker_a.is_analyzing || self.worker_b.is_analyzing
+    }
+
+    fn is_loading(&self) -> bool {
+        self.worker_a.is_loading || self.worker_b.is_loading
+    }
+
+    fn model_name(path: Option<&str>) -> Option<&str> {
+        path.and_then(|p| std::path::Path::new(p).file_name().and_then(|n| n.to_str()))
     }
 }
 
@@ -117,7 +200,7 @@ impl eframe::App for PerplexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_worker_messages();
 
-        if self.worker.is_analyzing || self.worker.is_loading {
+        if self.is_analyzing() || self.is_loading() {
             ctx.request_repaint();
         }
 
@@ -125,47 +208,61 @@ impl eframe::App for PerplexApp {
             egui::Frame::none().inner_margin(20.0).show(ui, |ui| {
                 if ui_main::render_header(
                     ui,
-                    self.settings.model_path.as_deref(),
-                    self.worker.is_loading,
+                    self.settings.model_path_a.as_deref(),
+                    self.settings.model_path_b.as_deref(),
+                    self.worker_a.is_loading,
+                    self.worker_b.is_loading,
                 ) {
                     self.show_settings = true;
-                    // Initialize buffer with current path when opening
-                    self.settings_path_buffer =
-                        self.settings.model_path.clone().unwrap_or_default();
+                    self.settings_path_buffer_a =
+                        self.settings.model_path_a.clone().unwrap_or_default();
+                    self.settings_path_buffer_b =
+                        self.settings.model_path_b.clone().unwrap_or_default();
                 }
 
                 ui.add_space(12.0);
 
-                if ui_main::render_model_panel(ui, self.settings.model_path.is_some()) {
-                    self.select_model();
+                let (clicked_a, clicked_b) = ui_main::render_model_panel(
+                    ui,
+                    self.settings.model_path_a.is_some(),
+                    self.settings.model_path_b.is_some(),
+                );
+                if clicked_a {
+                    self.select_model_a();
+                }
+                if clicked_b {
+                    self.select_model_b();
                 }
 
                 let available = ui.available_height();
-                let has_results = self.analysis_result.is_some();
-
+                let has_results = self.result_a.is_some() || self.result_b.is_some();
                 let input_height = if has_results {
-                    (available * 0.35).max(120.0)
+                    (available * 0.25).max(100.0)
                 } else {
-                    (available * 0.4).max(150.0)
+                    (available * 0.35).max(120.0)
                 };
 
+                let not_analyzing = !self.is_analyzing();
                 if ui_main::render_text_input(
                     ui,
                     &mut self.input_text,
-                    !self.worker.is_analyzing,
+                    not_analyzing,
                     input_height,
                     self.token_count,
                 ) {
-                    let _ = self
-                        .worker
-                        .send_command(WorkerCommand::Tokenize(self.input_text.clone()));
+                    if self.worker_a.is_ready() {
+                        let _ = self
+                            .worker_a
+                            .send_command(WorkerCommand::Tokenize(self.input_text.clone()));
+                    }
                 }
 
                 if ui_main::render_controls(
                     ui,
                     self.can_analyze(),
-                    self.worker.is_analyzing,
-                    self.worker.progress,
+                    self.is_analyzing(),
+                    self.worker_a.progress,
+                    self.worker_b.progress,
                 ) {
                     self.start_analysis();
                 }
@@ -174,11 +271,21 @@ impl eframe::App for PerplexApp {
                     ui_main::render_error(ui, error);
                 }
 
-                if let Some(ref result) = self.analysis_result {
-                    let results_height = ui.available_height();
-                    ui_main::render_results(ui, result, results_height);
-                } else if !self.worker.is_analyzing {
-                    ui_main::render_empty_state(ui, self.settings.model_path.is_some());
+                if has_results {
+                    ui_main::render_results(
+                        ui,
+                        self.result_a.as_ref(),
+                        self.result_b.as_ref(),
+                        Self::model_name(self.settings.model_path_a.as_deref()),
+                        Self::model_name(self.settings.model_path_b.as_deref()),
+                        ui.available_height(),
+                    );
+                } else if !self.is_analyzing() {
+                    ui_main::render_empty_state(
+                        ui,
+                        self.settings.model_path_a.is_some()
+                            || self.settings.model_path_b.is_some(),
+                    );
                 }
             });
         });
@@ -187,28 +294,45 @@ impl eframe::App for PerplexApp {
             if let Some(action) = ui_settings::render_settings_window(
                 ctx,
                 &mut self.show_settings,
-                &mut self.settings_path_buffer,
+                &mut self.settings_path_buffer_a,
+                &mut self.settings_path_buffer_b,
             ) {
                 match action {
-                    ui_settings::SettingsAction::Browse => {
+                    ui_settings::SettingsAction::BrowseA => {
                         if let Some(path) = pick_gguf_model() {
-                            self.settings_path_buffer = path;
+                            self.settings_path_buffer_a = path;
+                        }
+                    }
+                    ui_settings::SettingsAction::BrowseB => {
+                        if let Some(path) = pick_gguf_model() {
+                            self.settings_path_buffer_b = path;
                         }
                     }
                     ui_settings::SettingsAction::Save => {
-                        if !self.settings_path_buffer.is_empty() {
-                            self.load_model(self.settings_path_buffer.clone());
+                        let path_a = self.settings_path_buffer_a.clone();
+                        let path_b = self.settings_path_buffer_b.clone();
+
+                        if !path_a.is_empty() {
+                            if self.settings.model_path_a.as_deref() != Some(&path_a) {
+                                self.load_model_a(path_a);
+                            }
                         } else {
-                            // Similar to clear logic but via save empty
-                            self.settings.model_path = None;
-                            let _ = self.settings.save();
-                            self.worker.shutdown();
-                            self.analysis_result = None;
-                            self.token_count = None;
+                            self.clear_model_a();
+                        }
+
+                        if !path_b.is_empty() {
+                            if self.settings.model_path_b.as_deref() != Some(&path_b) {
+                                self.load_model_b(path_b);
+                            }
+                        } else {
+                            self.clear_model_b();
                         }
                     }
-                    ui_settings::SettingsAction::Clear => {
-                        self.settings_path_buffer.clear();
+                    ui_settings::SettingsAction::ClearA => {
+                        self.settings_path_buffer_a.clear();
+                    }
+                    ui_settings::SettingsAction::ClearB => {
+                        self.settings_path_buffer_b.clear();
                     }
                 }
             }
@@ -216,7 +340,8 @@ impl eframe::App for PerplexApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.worker.shutdown();
+        self.worker_a.shutdown();
+        self.worker_b.shutdown();
     }
 }
 
@@ -231,8 +356,8 @@ fn pick_gguf_model() -> Option<String> {
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([900.0, 700.0])
-            .with_min_inner_size([600.0, 400.0])
+            .with_inner_size([1200.0, 800.0])
+            .with_min_inner_size([800.0, 500.0])
             .with_title("Perplex"),
         ..Default::default()
     };

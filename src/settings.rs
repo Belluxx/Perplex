@@ -8,7 +8,8 @@ const SETTINGS_FILE_NAME: &str = ".perplex_settings.json";
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Settings {
-    pub model_path: Option<String>,
+    pub model_path_a: Option<String>,
+    pub model_path_b: Option<String>,
 }
 
 impl Settings {

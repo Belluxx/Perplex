@@ -5,29 +5,36 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::LlamaModel;
 use std::num::NonZeroU32;
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::{mpsc, OnceLock};
+
+static LLAMA_BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
+
+fn get_backend() -> &'static LlamaBackend {
+    LLAMA_BACKEND.get_or_init(|| {
+        log::info!("Initializing Llama backend (one-time)...");
+        LlamaBackend::init().expect("Failed to initialize Llama backend")
+    })
+}
 
 use crate::analysis::{AnalysisResult, AnalyzedToken};
 use crate::worker::{WorkerCommand, WorkerMessage};
 
 pub struct LlamaAnalyzer {
     model: LlamaModel,
-    backend: LlamaBackend,
+    backend: &'static LlamaBackend,
 }
 
 impl LlamaAnalyzer {
     pub fn new<P: AsRef<Path>>(model_path: P) -> Result<Self, String> {
         let path_str = model_path.as_ref().to_string_lossy().to_string();
-        log::info!("Initializing Llama backend...");
 
-        let backend =
-            LlamaBackend::init().map_err(|e| format!("Failed to initialize backend: {}", e))?;
+        let backend = get_backend();
 
         log::info!("Loading model from: {}", path_str);
 
         let model_params = LlamaModelParams::default();
 
-        let model = LlamaModel::load_from_file(&backend, model_path, &model_params)
+        let model = LlamaModel::load_from_file(backend, model_path, &model_params)
             .map_err(|e| format!("Failed to load model: {}", e))?;
 
         log::info!("Model loaded");

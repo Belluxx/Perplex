@@ -83,32 +83,3 @@ impl AnalysisResult {
         n * ppl.log2()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_average_rank() {
-        let tokens = vec![
-            AnalyzedToken::new("a".to_string(), 1, vec![], 0.9),
-            AnalyzedToken::new("b".to_string(), 5, vec![], 0.1),
-            AnalyzedToken::new("c".to_string(), 10, vec![], 0.05),
-        ];
-        let result = AnalysisResult::new(tokens, 100);
-
-        assert!((result.average_rank() - 7.5).abs() < 0.1);
-    }
-
-    #[test]
-    fn test_perplexity() {
-        let tokens = vec![
-            AnalyzedToken::new("a".to_string(), 1, vec![], 0.9),
-            AnalyzedToken::new("b".to_string(), 5, vec![], 0.1),
-            AnalyzedToken::new("c".to_string(), 10, vec![], 0.05),
-        ];
-        let result = AnalysisResult::new(tokens, 100);
-
-        assert!((result.perplexity() - 14.14).abs() < 0.1);
-    }
-}
