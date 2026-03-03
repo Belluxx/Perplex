@@ -1,12 +1,11 @@
 use egui::RichText;
 
-#[derive(PartialEq)]
+use crate::ModelSlot;
+
 pub enum SettingsAction {
-    BrowseA,
-    BrowseB,
+    Browse(ModelSlot),
     Save,
-    ClearA,
-    ClearB,
+    Clear(ModelSlot),
 }
 
 pub fn render_settings_window(
@@ -24,25 +23,11 @@ pub fn render_settings_window(
             ui.heading("Model Configuration");
             ui.add_space(10.0);
 
-            render_model_group(
-                ui,
-                "Model A",
-                path_buffer_a,
-                &mut action,
-                SettingsAction::BrowseA,
-                SettingsAction::ClearA,
-            );
+            render_model_group(ui, "Model A", path_buffer_a, &mut action, ModelSlot::A);
 
             ui.add_space(8.0);
 
-            render_model_group(
-                ui,
-                "Model B",
-                path_buffer_b,
-                &mut action,
-                SettingsAction::BrowseB,
-                SettingsAction::ClearB,
-            );
+            render_model_group(ui, "Model B", path_buffer_b, &mut action, ModelSlot::B);
 
             ui.add_space(12.0);
 
@@ -61,8 +46,7 @@ fn render_model_group(
     label: &str,
     path_buffer: &mut String,
     action: &mut Option<SettingsAction>,
-    browse_action: SettingsAction,
-    clear_action: SettingsAction,
+    slot: ModelSlot,
 ) {
     ui.group(|ui| {
         ui.label(RichText::new(label).strong());
@@ -80,10 +64,10 @@ fn render_model_group(
 
         ui.horizontal(|ui| {
             if ui.button("📂 Browse…").clicked() {
-                *action = Some(browse_action);
+                *action = Some(SettingsAction::Browse(slot));
             }
             if !path_buffer.is_empty() && ui.button("❌ Clear").clicked() {
-                *action = Some(clear_action);
+                *action = Some(SettingsAction::Clear(slot));
             }
         });
     });

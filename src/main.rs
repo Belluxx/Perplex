@@ -4,6 +4,7 @@ mod llamacpp;
 mod settings;
 mod ui_main;
 mod ui_settings;
+mod ui_tokens;
 mod worker;
 
 use eframe::egui;
@@ -11,6 +12,23 @@ use eframe::egui;
 use crate::settings::Settings;
 use crate::ui_main::{UnifiedColorMode, ViewMode};
 use crate::worker::{WorkerCommand, WorkerManager, WorkerMessage};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ModelSlot {
+    A,
+    B,
+}
+
+impl ModelSlot {
+    const ALL: [ModelSlot; 2] = [ModelSlot::A, ModelSlot::B];
+
+    fn label(self) -> &'static str {
+        match self {
+            ModelSlot::A => "Model A",
+            ModelSlot::B => "Model B",
+        }
+    }
+}
 
 struct PerplexApp {
     settings: Settings,
@@ -55,55 +73,61 @@ impl PerplexApp {
         let mut app = Self::default();
         app.settings = Settings::load();
 
-        if let Some(path) = app.settings.model_path_a.clone() {
-            app.load_model_a(path);
-        }
-        if let Some(path) = app.settings.model_path_b.clone() {
-            app.load_model_b(path);
+        for slot in ModelSlot::ALL {
+            if let Some(path) = app.model_path_mut(slot).clone() {
+                app.load_model(slot, path);
+            }
         }
         app
     }
 
-    fn select_model_a(&mut self) {
-        if let Some(path) = pick_gguf_model() {
-            self.load_model_a(path);
+    fn model_path_mut(&mut self, slot: ModelSlot) -> &mut Option<String> {
+        match slot {
+            ModelSlot::A => &mut self.settings.model_path_a,
+            ModelSlot::B => &mut self.settings.model_path_b,
         }
     }
 
-    fn select_model_b(&mut self) {
-        if let Some(path) = pick_gguf_model() {
-            self.load_model_b(path);
+    fn result_mut(&mut self, slot: ModelSlot) -> &mut Option<analysis::AnalysisResult> {
+        match slot {
+            ModelSlot::A => &mut self.result_a,
+            ModelSlot::B => &mut self.result_b,
         }
     }
 
-    fn load_model_a(&mut self, path: String) {
-        self.settings.model_path_a = Some(path.clone());
+    fn worker_mut(&mut self, slot: ModelSlot) -> &mut WorkerManager {
+        match slot {
+            ModelSlot::A => &mut self.worker_a,
+            ModelSlot::B => &mut self.worker_b,
+        }
+    }
+
+    fn settings_path_buffer_mut(&mut self, slot: ModelSlot) -> &mut String {
+        match slot {
+            ModelSlot::A => &mut self.settings_path_buffer_a,
+            ModelSlot::B => &mut self.settings_path_buffer_b,
+        }
+    }
+
+    fn select_model(&mut self, slot: ModelSlot) {
+        if let Some(path) = pick_gguf_model() {
+            self.load_model(slot, path);
+        }
+    }
+
+    fn load_model(&mut self, slot: ModelSlot, path: String) {
+        *self.model_path_mut(slot) = Some(path.clone());
         self.save_settings();
         self.error_message = None;
-        self.result_a = None;
-        self.worker_a.load_model(path);
+        *self.result_mut(slot) = None;
+        self.worker_mut(slot).load_model(path);
     }
 
-    fn load_model_b(&mut self, path: String) {
-        self.settings.model_path_b = Some(path.clone());
+    fn clear_model(&mut self, slot: ModelSlot) {
+        *self.model_path_mut(slot) = None;
         self.save_settings();
-        self.error_message = None;
-        self.result_b = None;
-        self.worker_b.load_model(path);
-    }
-
-    fn clear_model_a(&mut self) {
-        self.settings.model_path_a = None;
-        self.save_settings();
-        self.worker_a.shutdown();
-        self.result_a = None;
-    }
-
-    fn clear_model_b(&mut self) {
-        self.settings.model_path_b = None;
-        self.save_settings();
-        self.worker_b.shutdown();
-        self.result_b = None;
+        self.worker_mut(slot).shutdown();
+        *self.result_mut(slot) = None;
     }
 
     fn save_settings(&self) {
@@ -125,67 +149,51 @@ impl PerplexApp {
         let text = self.input_text.clone();
         self.error_message = None;
 
-        if self.worker_a.is_ready() {
-            if let Err(e) = self
-                .worker_a
-                .send_command(WorkerCommand::Analyze(text.clone()))
-            {
-                self.append_error(format!("Model A: {}", e));
-            }
-        }
-        if self.worker_b.is_ready() {
-            if let Err(e) = self.worker_b.send_command(WorkerCommand::Analyze(text)) {
-                self.append_error(format!("Model B: {}", e));
+        for slot in ModelSlot::ALL {
+            if self.worker_mut(slot).is_ready() {
+                if let Err(e) = self
+                    .worker_mut(slot)
+                    .send_command(WorkerCommand::Analyze(text.clone()))
+                {
+                    self.append_error(format!("{}: {}", slot.label(), e));
+                }
             }
         }
     }
 
     fn process_worker_messages(&mut self) {
-        for msg in self.worker_a.poll_messages() {
-            match msg {
-                WorkerMessage::ModelLoaded => {
-                    log::info!("Model A loaded and ready");
-                    if !self.input_text.is_empty() {
-                        let _ = self
-                            .worker_a
-                            .send_command(WorkerCommand::Tokenize(self.input_text.clone()));
+        let input_text = self.input_text.clone();
+        for slot in ModelSlot::ALL {
+            let messages = self.worker_mut(slot).poll_messages();
+            for msg in messages {
+                match msg {
+                    WorkerMessage::ModelLoaded => {
+                        log::info!("{} loaded and ready", slot.label());
+                        // Auto-tokenize when primary model (A) finishes loading
+                        if slot == ModelSlot::A && !input_text.is_empty() {
+                            let _ = self
+                                .worker_mut(slot)
+                                .send_command(WorkerCommand::Tokenize(input_text.clone()));
+                        }
                     }
+                    WorkerMessage::TokenCount(count) => {
+                        self.token_count = Some(count);
+                    }
+                    WorkerMessage::Completed(result) => {
+                        *self.result_mut(slot) = Some(result);
+                    }
+                    WorkerMessage::Error(error) => {
+                        self.append_error(format!("{}: {}", slot.label(), error));
+                    }
+                    WorkerMessage::Started | WorkerMessage::Progress { .. } => {}
                 }
-                WorkerMessage::TokenCount(count) => {
-                    self.token_count = Some(count);
-                }
-                WorkerMessage::Completed(result) => {
-                    self.result_a = Some(result);
-                }
-                WorkerMessage::Error(error) => {
-                    self.append_error(format!("Model A: {}", error));
-                }
-                WorkerMessage::Started | WorkerMessage::Progress { .. } => {}
-            }
-        }
-
-        for msg in self.worker_b.poll_messages() {
-            match msg {
-                WorkerMessage::ModelLoaded => {
-                    log::info!("Model B loaded and ready");
-                }
-                WorkerMessage::Completed(result) => {
-                    self.result_b = Some(result);
-                }
-                WorkerMessage::Error(error) => {
-                    self.append_error(format!("Model B: {}", error));
-                }
-                WorkerMessage::TokenCount(_)
-                | WorkerMessage::Started
-                | WorkerMessage::Progress { .. } => {}
             }
         }
     }
 
     fn can_analyze(&self) -> bool {
         let any_ready = self.worker_a.is_ready() || self.worker_b.is_ready();
-        let any_analyzing = self.worker_a.is_analyzing || self.worker_b.is_analyzing;
-        any_ready && !self.input_text.is_empty() && !any_analyzing
+        !self.input_text.is_empty() && any_ready && !self.is_analyzing()
     }
 
     fn is_analyzing(&self) -> bool {
@@ -194,10 +202,6 @@ impl PerplexApp {
 
     fn is_loading(&self) -> bool {
         self.worker_a.is_loading || self.worker_b.is_loading
-    }
-
-    fn model_name(path: Option<&str>) -> Option<&str> {
-        path.and_then(|p| std::path::Path::new(p).file_name().and_then(|n| n.to_str()))
     }
 }
 
@@ -219,10 +223,10 @@ impl eframe::App for PerplexApp {
                     self.worker_b.is_loading,
                 ) {
                     self.show_settings = true;
-                    self.settings_path_buffer_a =
-                        self.settings.model_path_a.clone().unwrap_or_default();
-                    self.settings_path_buffer_b =
-                        self.settings.model_path_b.clone().unwrap_or_default();
+                    for slot in ModelSlot::ALL {
+                        *self.settings_path_buffer_mut(slot) =
+                            self.model_path_mut(slot).clone().unwrap_or_default();
+                    }
                 }
 
                 ui.add_space(12.0);
@@ -233,10 +237,10 @@ impl eframe::App for PerplexApp {
                     self.settings.model_path_b.is_some(),
                 );
                 if clicked_a {
-                    self.select_model_a();
+                    self.select_model(ModelSlot::A);
                 }
                 if clicked_b {
-                    self.select_model_b();
+                    self.select_model(ModelSlot::B);
                 }
 
                 let available = ui.available_height();
@@ -281,8 +285,8 @@ impl eframe::App for PerplexApp {
                         ui,
                         self.result_a.as_ref(),
                         self.result_b.as_ref(),
-                        Self::model_name(self.settings.model_path_a.as_deref()),
-                        Self::model_name(self.settings.model_path_b.as_deref()),
+                        model_name_from_path(self.settings.model_path_a.as_deref()),
+                        model_name_from_path(self.settings.model_path_b.as_deref()),
                         ui.available_height(),
                         &mut self.view_mode,
                         &mut self.unified_color_mode,
@@ -305,41 +309,27 @@ impl eframe::App for PerplexApp {
                 &mut self.settings_path_buffer_b,
             ) {
                 match action {
-                    ui_settings::SettingsAction::BrowseA => {
+                    ui_settings::SettingsAction::Browse(slot) => {
                         if let Some(path) = pick_gguf_model() {
-                            self.settings_path_buffer_a = path;
-                        }
-                    }
-                    ui_settings::SettingsAction::BrowseB => {
-                        if let Some(path) = pick_gguf_model() {
-                            self.settings_path_buffer_b = path;
+                            *self.settings_path_buffer_mut(slot) = path;
                         }
                     }
                     ui_settings::SettingsAction::Save => {
-                        let path_a = self.settings_path_buffer_a.clone();
-                        let path_b = self.settings_path_buffer_b.clone();
+                        self.show_settings = false;
 
-                        if !path_a.is_empty() {
-                            if self.settings.model_path_a.as_deref() != Some(&path_a) {
-                                self.load_model_a(path_a);
+                        for slot in ModelSlot::ALL {
+                            let path = self.settings_path_buffer_mut(slot).clone();
+                            if !path.is_empty() {
+                                if self.model_path_mut(slot).as_deref() != Some(&path) {
+                                    self.load_model(slot, path);
+                                }
+                            } else {
+                                self.clear_model(slot);
                             }
-                        } else {
-                            self.clear_model_a();
-                        }
-
-                        if !path_b.is_empty() {
-                            if self.settings.model_path_b.as_deref() != Some(&path_b) {
-                                self.load_model_b(path_b);
-                            }
-                        } else {
-                            self.clear_model_b();
                         }
                     }
-                    ui_settings::SettingsAction::ClearA => {
-                        self.settings_path_buffer_a.clear();
-                    }
-                    ui_settings::SettingsAction::ClearB => {
-                        self.settings_path_buffer_b.clear();
+                    ui_settings::SettingsAction::Clear(slot) => {
+                        self.settings_path_buffer_mut(slot).clear();
                     }
                 }
             }
@@ -347,8 +337,9 @@ impl eframe::App for PerplexApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.worker_a.shutdown();
-        self.worker_b.shutdown();
+        for slot in ModelSlot::ALL {
+            self.worker_mut(slot).shutdown();
+        }
     }
 }
 
@@ -358,6 +349,11 @@ fn pick_gguf_model() -> Option<String> {
         .set_title("Select a GGUF Model")
         .pick_file()
         .map(|p| p.to_string_lossy().to_string())
+}
+
+/// Extracts the file name from an optional model path.
+pub fn model_name_from_path(path: Option<&str>) -> Option<&str> {
+    path.and_then(|p| std::path::Path::new(p).file_name().and_then(|n| n.to_str()))
 }
 
 fn main() -> eframe::Result<()> {

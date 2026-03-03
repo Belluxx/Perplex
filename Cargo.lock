@@ -2536,6 +2536,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
+ "encoding_rs",
  "env_logger",
  "llama-cpp-2",
  "log",

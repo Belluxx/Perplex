@@ -62,10 +62,10 @@ impl LlamaAnalyzer {
             .map_err(|e| format!("Failed to tokenize: {}", e))?;
 
         if tokens.is_empty() {
-            return Ok(AnalysisResult::new(
-                vec![],
-                start_time.elapsed().as_millis() as u64,
-            ));
+            return Ok(AnalysisResult {
+                tokens: vec![],
+                processing_time_ms: start_time.elapsed().as_millis() as u64,
+            });
         }
 
         let total_tokens = tokens.len();
@@ -104,7 +104,7 @@ impl LlamaAnalyzer {
         // Process tokens in batches to avoid overwhelming the context or memory.
         // This loop decodes a chunk of tokens, then checks the model's prediction
         // for each token against the *actual* next token in the sequence.
-        for (_batch_idx, chunk) in tokens.chunks(n_batch as usize).enumerate() {
+        for chunk in tokens.chunks(n_batch as usize) {
             if let Some(tx) = progress_tx {
                 let _ = tx.send(WorkerMessage::Progress {
                     current: processed_count,
@@ -140,11 +140,7 @@ impl LlamaAnalyzer {
                 logits.extend(candidates.map(|td| (td.id().0, td.logit())));
 
                 let (rank, prob, top_preds) = if let Some(next_tok) = next_token {
-                    if logits.is_empty() {
-                        (1, 0.0, Vec::new())
-                    } else {
-                        Self::calculate_token_metrics(&mut logits, Some(next_tok))
-                    }
+                    Self::calculate_token_metrics(&mut logits, Some(next_tok))
                 } else {
                     (1, 0.0, Vec::new())
                 };
@@ -166,13 +162,15 @@ impl LlamaAnalyzer {
 
         let format_start = std::time::Instant::now();
 
+        let mut decoder = encoding_rs::UTF_8.new_decoder();
+
         let analyzed_tokens: Vec<AnalyzedToken> = tokens
             .iter()
             .enumerate()
             .map(|(i, &token)| {
                 let token_text = self
                     .model
-                    .token_to_str(token, llama_cpp_2::model::Special::Tokenize)
+                    .token_to_piece(token, &mut decoder, true, None)
                     .unwrap_or_else(|_| format!("[{}]", token.0));
 
                 let (rank, prob, top_preds_raw) = if i == 0 {
@@ -186,16 +184,23 @@ impl LlamaAnalyzer {
                     .map(|(id, prob)| {
                         let pred_text = self
                             .model
-                            .token_to_str(
+                            .token_to_piece(
                                 llama_cpp_2::token::LlamaToken(id),
-                                llama_cpp_2::model::Special::Tokenize,
+                                &mut decoder,
+                                true,
+                                None,
                             )
                             .unwrap_or_else(|_| format!("[{}]", id));
                         (pred_text, prob)
                     })
                     .collect();
 
-                AnalyzedToken::new(token_text, rank, top_predictions, prob)
+                AnalyzedToken {
+                    text: token_text,
+                    rank,
+                    top_predictions,
+                    probability: prob,
+                }
             })
             .collect();
 
@@ -207,7 +212,10 @@ impl LlamaAnalyzer {
         let elapsed = start_time.elapsed().as_millis() as u64;
         log::info!("Analysis completed in {}ms", elapsed);
 
-        Ok(AnalysisResult::new(analyzed_tokens, elapsed))
+        Ok(AnalysisResult {
+            tokens: analyzed_tokens,
+            processing_time_ms: elapsed,
+        })
     }
 
     // Calculates rank, probability and top predictions for the target token

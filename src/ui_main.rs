@@ -1,4 +1,4 @@
-use crate::analysis::{AnalysisResult, AnalyzedToken};
+use crate::analysis::AnalysisResult;
 use crate::colors;
 use egui::{Color32, FontId, RichText, Ui, Vec2};
 
@@ -86,10 +86,7 @@ fn render_model_badge(ui: &mut Ui, label: &str, path: Option<&str>, is_loading: 
                 .size(12.0),
         );
     } else if let Some(p) = path {
-        let name = std::path::Path::new(p)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(p);
+        let name = crate::model_name_from_path(Some(p)).unwrap_or(p);
         ui.label(
             RichText::new(format!("📦 {}: {}", label, name))
                 .color(colors::SUCCESS)
@@ -404,7 +401,7 @@ fn render_dual_results(
                     render_column_header(ui, label_a, colors::INFO);
                     render_stats_bar(ui, result_a);
                     ui.add_space(8.0);
-                    render_analyzed_tokens(
+                    crate::ui_tokens::render_analyzed_tokens(
                         ui,
                         &result_a.tokens,
                         Some(&result_b.tokens),
@@ -417,7 +414,7 @@ fn render_dual_results(
                     render_column_header(ui, label_b, colors::WARNING);
                     render_stats_bar(ui, result_b);
                     ui.add_space(8.0);
-                    render_analyzed_tokens(
+                    crate::ui_tokens::render_analyzed_tokens(
                         ui,
                         &result_b.tokens,
                         Some(&result_a.tokens),
@@ -441,7 +438,7 @@ fn render_single_result(ui: &mut Ui, result: &AnalysisResult, name: &str, height
         .id_salt("results_single_scroll")
         .max_height(scroll_height)
         .show(ui, |ui| {
-            render_analyzed_tokens(ui, &result.tokens, None, name, "");
+            crate::ui_tokens::render_analyzed_tokens(ui, &result.tokens, None, name, "");
         });
 }
 
@@ -531,208 +528,7 @@ fn legend_swatch(ui: &mut Ui, color: Color32, label: &str) {
     ui.add_space(8.0);
 }
 
-// ── Token rendering ─────────────────────────────────────────────────────────
-
-fn render_analyzed_tokens(
-    ui: &mut Ui,
-    tokens: &[AnalyzedToken],
-    other_tokens: Option<&[AnalyzedToken]>,
-    self_label: &str,
-    other_label: &str,
-) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
-
-        for (i, token) in tokens.iter().enumerate() {
-            let other = other_tokens.and_then(|ot| ot.get(i));
-            render_token(ui, token, other, self_label, other_label);
-        }
-    });
-}
-
-fn render_token(
-    ui: &mut Ui,
-    token: &AnalyzedToken,
-    other_token: Option<&AnalyzedToken>,
-    self_label: &str,
-    other_label: &str,
-) {
-    let bg_color = colors::rank_to_color(token.rank);
-    let display_text = token.text.replace('\n', "↵\n").replace('\t', "→");
-
-    let response = ui.add(
-        egui::Label::new(
-            RichText::new(&display_text)
-                .color(Color32::BLACK)
-                .background_color(bg_color)
-                .size(14.0)
-                .family(egui::FontFamily::Monospace),
-        )
-        .sense(egui::Sense::hover()),
-    );
-
-    response.on_hover_ui(|ui| {
-        ui.set_max_width(340.0);
-        ui.set_min_width(340.0);
-
-        // Token text header
-        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-            ui.label(
-                RichText::new(token.text.clone())
-                    .strong()
-                    .monospace()
-                    .size(15.0)
-                    .background_color(colors::secondary_bg(ui.visuals())),
-            );
-        });
-
-        ui.add_space(6.0);
-
-        if let Some(other) = other_token {
-            render_comparison_tooltip(ui, token, other, self_label, other_label);
-        } else {
-            render_single_tooltip(ui, token);
-        }
-    });
-}
-
-fn render_comparison_tooltip(
-    ui: &mut Ui,
-    token: &AnalyzedToken,
-    other: &AnalyzedToken,
-    self_label: &str,
-    other_label: &str,
-) {
-    ui.separator();
-    ui.add_space(4.0);
-
-    // Rank + probability comparison grid
-    egui::Grid::new(ui.next_auto_id())
-        .num_columns(3)
-        .spacing([12.0, 4.0])
-        .show(ui, |ui| {
-            ui.label(RichText::new("").size(11.0));
-            ui.label(
-                RichText::new(self_label)
-                    .strong()
-                    .size(11.0)
-                    .color(colors::INFO),
-            );
-            ui.label(
-                RichText::new(other_label)
-                    .strong()
-                    .size(11.0)
-                    .color(colors::WARNING),
-            );
-            ui.end_row();
-
-            ui.label(RichText::new("Rank").size(11.0));
-            render_rank_badge(ui, token.rank);
-            render_rank_badge(ui, other.rank);
-            ui.end_row();
-
-            ui.label(RichText::new("Prob").size(11.0));
-            render_prob_label(ui, token.probability);
-            render_prob_label(ui, other.probability);
-            ui.end_row();
-        });
-
-    ui.add_space(6.0);
-    ui.separator();
-    ui.add_space(4.0);
-
-    // Side-by-side predictions
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.label(
-                RichText::new(self_label)
-                    .strong()
-                    .size(11.0)
-                    .color(colors::INFO),
-            );
-            render_prediction_list(ui, &token.top_predictions);
-        });
-
-        ui.add_space(12.0);
-        ui.separator();
-        ui.add_space(12.0);
-
-        ui.vertical(|ui| {
-            ui.label(
-                RichText::new(other_label)
-                    .strong()
-                    .size(11.0)
-                    .color(colors::WARNING),
-            );
-            render_prediction_list(ui, &other.top_predictions);
-        });
-    });
-}
-
-fn render_single_tooltip(ui: &mut Ui, token: &AnalyzedToken) {
-    ui.label(RichText::new(format!("Rank: {}", token.rank)).size(12.0));
-
-    if !token.top_predictions.is_empty() {
-        ui.add_space(6.0);
-        ui.label(RichText::new("Top Predictions:").strong().size(11.0));
-        render_prediction_list(ui, &token.top_predictions);
-    }
-}
-
-// ── Tooltip helpers ─────────────────────────────────────────────────────────
-
-fn render_rank_badge(ui: &mut Ui, rank: usize) {
-    let color = colors::rank_to_color(rank);
-    ui.label(
-        RichText::new(format!("#{}", rank))
-            .strong()
-            .size(12.0)
-            .background_color(color)
-            .color(Color32::BLACK),
-    );
-}
-
-fn render_prob_label(ui: &mut Ui, prob: f32) {
-    let text = if prob < 0.001 {
-        "<0.1%".to_string()
-    } else {
-        format!("{:.1}%", prob * 100.0)
-    };
-    let color = colors::prob_to_color(prob);
-    ui.label(
-        RichText::new(text)
-            .strong()
-            .size(11.0)
-            .background_color(color)
-            .color(Color32::BLACK),
-    );
-}
-
-fn render_prediction_list(ui: &mut Ui, predictions: &[(String, f32)]) {
-    if predictions.is_empty() {
-        ui.label(RichText::new("—").size(11.0));
-        return;
-    }
-    for (i, (pred_text, prob)) in predictions.iter().enumerate() {
-        let display = pred_text.replace('\n', "↵").replace('\t', "→");
-        let pct = if *prob < 0.01 {
-            "<1%".to_string()
-        } else {
-            format!("{:.0}%", prob * 100.0)
-        };
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{}.", i + 1)).size(11.0));
-            ui.label(RichText::new(&display).monospace().size(11.0));
-            ui.label(
-                RichText::new(pct)
-                    .size(10.0)
-                    .color(colors::text_muted(ui.visuals())),
-            );
-        });
-    }
-}
-
-// ── Unified view rendering ──────────────────────────────────────────────────
+// ── Token rendering (delegated to ui_tokens) ────────────────────────────────
 
 fn render_unified_result(
     ui: &mut Ui,
@@ -752,7 +548,7 @@ fn render_unified_result(
         .max_height(scroll_height)
         .auto_shrink(false)
         .show(ui, |ui| {
-            render_unified_tokens(
+            crate::ui_tokens::render_unified_tokens(
                 ui,
                 &result_a.tokens,
                 &result_b.tokens,
@@ -761,83 +557,6 @@ fn render_unified_result(
                 color_mode,
             );
         });
-}
-
-fn render_unified_tokens(
-    ui: &mut Ui,
-    tokens_a: &[AnalyzedToken],
-    tokens_b: &[AnalyzedToken],
-    label_a: &str,
-    label_b: &str,
-    color_mode: UnifiedColorMode,
-) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
-
-        let len = tokens_a.len().max(tokens_b.len());
-        for i in 0..len {
-            let tok_a = tokens_a.get(i);
-            let tok_b = tokens_b.get(i);
-
-            // Determine display text from model A (primary), fallback to B
-            let display_token = tok_a.or(tok_b).unwrap();
-            let display_text = display_token.text.replace('\n', "↵\n").replace('\t', "→");
-
-            // Determine background color
-            let bg_color = match (tok_a, tok_b) {
-                (Some(a), Some(b)) => match color_mode {
-                    UnifiedColorMode::AvgRank => colors::average_rank_color(a.rank, b.rank),
-                    UnifiedColorMode::AvgProbability => {
-                        colors::average_prob_color(a.probability, b.probability)
-                    }
-                    UnifiedColorMode::RankDivergence => {
-                        colors::rank_divergence_color(a.rank, b.rank)
-                    }
-                    UnifiedColorMode::ProbDivergence => {
-                        colors::prob_divergence_color(a.probability, b.probability)
-                    }
-                },
-                (Some(a), None) => colors::rank_to_color(a.rank),
-                (None, Some(b)) => colors::rank_to_color(b.rank),
-                (None, None) => unreachable!(),
-            };
-
-            let response = ui.add(
-                egui::Label::new(
-                    RichText::new(&display_text)
-                        .color(Color32::BLACK)
-                        .background_color(bg_color)
-                        .size(14.0)
-                        .family(egui::FontFamily::Monospace),
-                )
-                .sense(egui::Sense::hover()),
-            );
-
-            response.on_hover_ui(|ui| {
-                ui.set_max_width(320.0);
-                ui.set_min_width(320.0);
-
-                // Token text header
-                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(display_token.text.clone())
-                            .strong()
-                            .monospace()
-                            .size(15.0)
-                            .background_color(colors::secondary_bg(ui.visuals())),
-                    );
-                });
-
-                ui.add_space(6.0);
-
-                if let (Some(a), Some(b)) = (tok_a, tok_b) {
-                    render_comparison_tooltip(ui, a, b, label_a, label_b);
-                } else if let Some(t) = tok_a.or(tok_b) {
-                    render_single_tooltip(ui, t);
-                }
-            });
-        }
-    });
 }
 
 // ── Empty state & error ─────────────────────────────────────────────────────

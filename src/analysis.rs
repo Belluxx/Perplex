@@ -6,22 +6,6 @@ pub struct AnalyzedToken {
     pub probability: f32,
 }
 
-impl AnalyzedToken {
-    pub fn new(
-        text: String,
-        rank: usize,
-        top_predictions: Vec<(String, f32)>,
-        probability: f32,
-    ) -> Self {
-        Self {
-            text,
-            rank,
-            top_predictions,
-            probability,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct AnalysisResult {
     pub tokens: Vec<AnalyzedToken>,
@@ -29,13 +13,6 @@ pub struct AnalysisResult {
 }
 
 impl AnalysisResult {
-    pub fn new(tokens: Vec<AnalyzedToken>, processing_time_ms: u64) -> Self {
-        Self {
-            tokens,
-            processing_time_ms,
-        }
-    }
-
     /// Returns all tokens except the first (which has no prediction).
     fn scored_tokens(&self) -> &[AnalyzedToken] {
         if self.tokens.len() <= 1 {
