@@ -58,9 +58,11 @@ pub fn render_header(
 
         ui.add_space(20.0);
 
-        render_model_badge(ui, "A", model_path_a, is_loading_a);
-        ui.add_space(10.0);
-        render_model_badge(ui, "B", model_path_b, is_loading_b);
+        ui.vertical(|ui| {
+            render_model_badge(ui, colors::INFO, model_path_a, is_loading_a);
+            ui.add_space(2.0);
+            render_model_badge(ui, colors::WARNING, model_path_b, is_loading_b);
+        });
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
@@ -77,24 +79,22 @@ pub fn render_header(
     settings_clicked
 }
 
-fn render_model_badge(ui: &mut Ui, label: &str, path: Option<&str>, is_loading: bool) {
+fn render_model_badge(ui: &mut Ui, color: Color32, path: Option<&str>, is_loading: bool) {
     if is_loading {
-        ui.spinner();
-        ui.label(
-            RichText::new(format!("{}: Loading…", label))
-                .color(colors::text_primary(ui.visuals()))
-                .size(12.0),
-        );
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(RichText::new("Loading…").color(color).size(12.0));
+        });
     } else if let Some(p) = path {
         let name = crate::model_name_from_path(Some(p)).unwrap_or(p);
         ui.label(
-            RichText::new(format!("📦 {}: {}", label, name))
-                .color(colors::SUCCESS)
+            RichText::new(format!("📦 {}", name))
+                .color(color)
                 .size(12.0),
         );
     } else {
         ui.label(
-            RichText::new(format!("❌ {}: None", label))
+            RichText::new("❌ None")
                 .color(colors::text_muted(ui.visuals()))
                 .size(12.0),
         );
