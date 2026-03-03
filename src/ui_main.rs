@@ -2,6 +2,42 @@ use crate::analysis::{AnalysisResult, AnalyzedToken};
 use crate::colors;
 use egui::{Color32, FontId, RichText, Ui, Vec2};
 
+// ── View mode enums ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    Split,
+    Unified,
+}
+
+impl std::fmt::Display for ViewMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ViewMode::Split => write!(f, "Split"),
+            ViewMode::Unified => write!(f, "Unified"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnifiedColorMode {
+    AvgRank,
+    AvgProbability,
+    RankDivergence,
+    ProbDivergence,
+}
+
+impl std::fmt::Display for UnifiedColorMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnifiedColorMode::AvgRank => write!(f, "Average rank"),
+            UnifiedColorMode::AvgProbability => write!(f, "Average probability"),
+            UnifiedColorMode::RankDivergence => write!(f, "Divergence rank"),
+            UnifiedColorMode::ProbDivergence => write!(f, "Divergence probability"),
+        }
+    }
+}
+
 // ── Header ──────────────────────────────────────────────────────────────────
 
 /// Renders the app header. Returns `true` if the settings button was clicked.
@@ -228,25 +264,115 @@ pub fn render_results(
     model_name_a: Option<&str>,
     model_name_b: Option<&str>,
     height: f32,
+    view_mode: &mut ViewMode,
+    unified_color_mode: &mut UnifiedColorMode,
 ) {
     ui.add_space(16.0);
     ui.separator();
     ui.add_space(8.0);
 
-    render_legend(ui);
-    ui.add_space(12.0);
-
     let both = result_a.is_some() && result_b.is_some();
 
+    // Show view-mode segmented control when both models have results
     if both {
-        render_dual_results(
-            ui,
-            result_a.unwrap(),
-            result_b.unwrap(),
-            model_name_a,
-            model_name_b,
-            height,
-        );
+        ui.horizontal(|ui| {
+            // Segmented control: Split | Unified
+            ui.label(
+                RichText::new("View:")
+                    .size(12.0)
+                    .color(colors::text_muted(ui.visuals())),
+            );
+            ui.add_space(4.0);
+
+            let split_selected = *view_mode == ViewMode::Split;
+            let unified_selected = *view_mode == ViewMode::Unified;
+
+            if ui
+                .selectable_label(split_selected, RichText::new("🔀 Split").size(12.0))
+                .clicked()
+            {
+                *view_mode = ViewMode::Split;
+            }
+            if ui
+                .selectable_label(unified_selected, RichText::new("⊞ Unified").size(12.0))
+                .clicked()
+            {
+                *view_mode = ViewMode::Unified;
+            }
+
+            // Show color-mode combo when in Unified mode
+            if *view_mode == ViewMode::Unified {
+                ui.add_space(16.0);
+                ui.label(
+                    RichText::new("Color:")
+                        .size(12.0)
+                        .color(colors::text_muted(ui.visuals())),
+                );
+                egui::ComboBox::from_id_salt("unified_color_mode")
+                    .selected_text(RichText::new(unified_color_mode.to_string()).size(12.0))
+                    .width(130.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            unified_color_mode,
+                            UnifiedColorMode::AvgRank,
+                            "Average rank",
+                        );
+                        ui.selectable_value(
+                            unified_color_mode,
+                            UnifiedColorMode::AvgProbability,
+                            "Average probability",
+                        );
+                        ui.selectable_value(
+                            unified_color_mode,
+                            UnifiedColorMode::RankDivergence,
+                            "Divergence rank",
+                        );
+                        ui.selectable_value(
+                            unified_color_mode,
+                            UnifiedColorMode::ProbDivergence,
+                            "Divergence probability",
+                        );
+                    });
+            }
+        });
+        ui.add_space(4.0);
+    }
+
+    // Legend (varies by mode)
+    if both && *view_mode == ViewMode::Unified {
+        match *unified_color_mode {
+            UnifiedColorMode::AvgProbability => render_prob_legend(ui),
+            UnifiedColorMode::RankDivergence | UnifiedColorMode::ProbDivergence => {
+                render_divergence_legend(ui)
+            }
+            UnifiedColorMode::AvgRank => render_legend(ui),
+        }
+    } else {
+        render_legend(ui);
+    }
+    ui.add_space(12.0);
+
+    if both {
+        if *view_mode == ViewMode::Unified {
+            render_unified_result(
+                ui,
+                result_a.unwrap(),
+                result_b.unwrap(),
+                model_name_a,
+                model_name_b,
+                height,
+                *unified_color_mode,
+            );
+        } else {
+            render_dual_results(
+                ui,
+                result_a.unwrap(),
+                result_b.unwrap(),
+                model_name_a,
+                model_name_b,
+                height,
+            );
+        }
     } else {
         let (result, name) = if let Some(r) = result_a {
             (r, model_name_a.unwrap_or("Model A"))
@@ -353,25 +479,6 @@ fn render_stats_bar(ui: &mut Ui, result: &AnalysisResult) {
         ui.add_space(10.0);
 
         ui.label(
-            RichText::new(format!("Rank: {:.0}", result.average_rank()))
-                .color(colors::INFO)
-                .size(12.0),
-        );
-
-        ui.add_space(10.0);
-
-        ui.label(
-            RichText::new(format!(
-                "Exact: {:.0}%",
-                result.exact_prediction_percentage()
-            ))
-            .color(colors::SUCCESS)
-            .size(12.0),
-        );
-
-        ui.add_space(10.0);
-
-        ui.label(
             RichText::new(format!("Entropy: {:.0}b", result.text_entropy()))
                 .color(colors::ACCENT_PRIMARY)
                 .size(12.0),
@@ -384,13 +491,36 @@ fn render_stats_bar(ui: &mut Ui, result: &AnalysisResult) {
 
 fn render_legend(ui: &mut Ui) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Legend:").size(12.0));
+        ui.label(RichText::new("Legend (rank):").size(12.0));
         ui.add_space(8.0);
 
-        legend_swatch(ui, colors::RANK_PERFECT, "Rank 1");
-        legend_swatch(ui, colors::RANK_GOOD_START, "Rank 2–10");
-        legend_swatch(ui, colors::RANK_MODERATE, "Rank 11–50");
-        legend_swatch(ui, colors::RANK_POOR, "Rank > 50");
+        legend_swatch(ui, colors::RANK_PERFECT, "1");
+        legend_swatch(ui, colors::RANK_GOOD_START, "2-10");
+        legend_swatch(ui, colors::RANK_MODERATE, "11-50");
+        legend_swatch(ui, colors::RANK_POOR, "> 50");
+    });
+}
+
+fn render_divergence_legend(ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Legend (divergence):").size(12.0));
+        ui.add_space(8.0);
+
+        legend_swatch(ui, colors::rank_divergence_color(1, 1), "Agree");
+        legend_swatch(ui, colors::rank_divergence_color(1, 20), "Some divergence");
+        legend_swatch(ui, colors::rank_divergence_color(1, 200), "Disagree");
+    });
+}
+
+fn render_prob_legend(ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Legend (probability):").size(12.0));
+        ui.add_space(8.0);
+
+        legend_swatch(ui, colors::prob_to_color(0.75), ">50%");
+        legend_swatch(ui, colors::prob_to_color(0.25), "10-50%");
+        legend_swatch(ui, colors::prob_to_color(0.05), "1-10%");
+        legend_swatch(ui, colors::prob_to_color(0.005), "<1%");
     });
 }
 
@@ -442,7 +572,8 @@ fn render_token(
     );
 
     response.on_hover_ui(|ui| {
-        ui.set_max_width(320.0);
+        ui.set_max_width(340.0);
+        ui.set_min_width(340.0);
 
         // Token text header
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
@@ -567,7 +698,14 @@ fn render_prob_label(ui: &mut Ui, prob: f32) {
     } else {
         format!("{:.1}%", prob * 100.0)
     };
-    ui.label(RichText::new(text).size(11.0));
+    let color = colors::prob_to_color(prob);
+    ui.label(
+        RichText::new(text)
+            .strong()
+            .size(11.0)
+            .background_color(color)
+            .color(Color32::BLACK),
+    );
 }
 
 fn render_prediction_list(ui: &mut Ui, predictions: &[(String, f32)]) {
@@ -592,6 +730,114 @@ fn render_prediction_list(ui: &mut Ui, predictions: &[(String, f32)]) {
             );
         });
     }
+}
+
+// ── Unified view rendering ──────────────────────────────────────────────────
+
+fn render_unified_result(
+    ui: &mut Ui,
+    result_a: &AnalysisResult,
+    result_b: &AnalysisResult,
+    model_name_a: Option<&str>,
+    model_name_b: Option<&str>,
+    height: f32,
+    color_mode: UnifiedColorMode,
+) {
+    let label_a = model_name_a.unwrap_or("Model A");
+    let label_b = model_name_b.unwrap_or("Model B");
+
+    let scroll_height = (height - 140.0).max(100.0);
+    egui::ScrollArea::vertical()
+        .id_salt("results_unified_scroll")
+        .max_height(scroll_height)
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            render_unified_tokens(
+                ui,
+                &result_a.tokens,
+                &result_b.tokens,
+                label_a,
+                label_b,
+                color_mode,
+            );
+        });
+}
+
+fn render_unified_tokens(
+    ui: &mut Ui,
+    tokens_a: &[AnalyzedToken],
+    tokens_b: &[AnalyzedToken],
+    label_a: &str,
+    label_b: &str,
+    color_mode: UnifiedColorMode,
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
+
+        let len = tokens_a.len().max(tokens_b.len());
+        for i in 0..len {
+            let tok_a = tokens_a.get(i);
+            let tok_b = tokens_b.get(i);
+
+            // Determine display text from model A (primary), fallback to B
+            let display_token = tok_a.or(tok_b).unwrap();
+            let display_text = display_token.text.replace('\n', "↵\n").replace('\t', "→");
+
+            // Determine background color
+            let bg_color = match (tok_a, tok_b) {
+                (Some(a), Some(b)) => match color_mode {
+                    UnifiedColorMode::AvgRank => colors::average_rank_color(a.rank, b.rank),
+                    UnifiedColorMode::AvgProbability => {
+                        colors::average_prob_color(a.probability, b.probability)
+                    }
+                    UnifiedColorMode::RankDivergence => {
+                        colors::rank_divergence_color(a.rank, b.rank)
+                    }
+                    UnifiedColorMode::ProbDivergence => {
+                        colors::prob_divergence_color(a.probability, b.probability)
+                    }
+                },
+                (Some(a), None) => colors::rank_to_color(a.rank),
+                (None, Some(b)) => colors::rank_to_color(b.rank),
+                (None, None) => unreachable!(),
+            };
+
+            let response = ui.add(
+                egui::Label::new(
+                    RichText::new(&display_text)
+                        .color(Color32::BLACK)
+                        .background_color(bg_color)
+                        .size(14.0)
+                        .family(egui::FontFamily::Monospace),
+                )
+                .sense(egui::Sense::hover()),
+            );
+
+            response.on_hover_ui(|ui| {
+                ui.set_max_width(320.0);
+                ui.set_min_width(320.0);
+
+                // Token text header
+                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(display_token.text.clone())
+                            .strong()
+                            .monospace()
+                            .size(15.0)
+                            .background_color(colors::secondary_bg(ui.visuals())),
+                    );
+                });
+
+                ui.add_space(6.0);
+
+                if let (Some(a), Some(b)) = (tok_a, tok_b) {
+                    render_comparison_tooltip(ui, a, b, label_a, label_b);
+                } else if let Some(t) = tok_a.or(tok_b) {
+                    render_single_tooltip(ui, t);
+                }
+            });
+        }
+    });
 }
 
 // ── Empty state & error ─────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ mod worker;
 use eframe::egui;
 
 use crate::settings::Settings;
+use crate::ui_main::{UnifiedColorMode, ViewMode};
 use crate::worker::{WorkerCommand, WorkerManager, WorkerMessage};
 
 struct PerplexApp {
@@ -23,6 +24,8 @@ struct PerplexApp {
     token_count: Option<usize>,
     worker_a: WorkerManager,
     worker_b: WorkerManager,
+    view_mode: ViewMode,
+    unified_color_mode: UnifiedColorMode,
 }
 
 impl Default for PerplexApp {
@@ -39,6 +42,8 @@ impl Default for PerplexApp {
             token_count: None,
             worker_a: WorkerManager::default(),
             worker_b: WorkerManager::default(),
+            view_mode: ViewMode::Split,
+            unified_color_mode: UnifiedColorMode::AvgRank,
         }
     }
 }
@@ -279,6 +284,8 @@ impl eframe::App for PerplexApp {
                         Self::model_name(self.settings.model_path_a.as_deref()),
                         Self::model_name(self.settings.model_path_b.as_deref()),
                         ui.available_height(),
+                        &mut self.view_mode,
+                        &mut self.unified_color_mode,
                     );
                 } else if !self.is_analyzing() {
                     ui_main::render_empty_state(

@@ -45,24 +45,6 @@ impl AnalysisResult {
         }
     }
 
-    pub fn average_rank(&self) -> f32 {
-        let scored = self.scored_tokens();
-        if scored.is_empty() {
-            return 0.0;
-        }
-        let sum: usize = scored.iter().map(|t| t.rank).sum();
-        sum as f32 / scored.len() as f32
-    }
-
-    pub fn exact_prediction_percentage(&self) -> f32 {
-        let scored = self.scored_tokens();
-        if scored.is_empty() {
-            return 0.0;
-        }
-        let exact = scored.iter().filter(|t| t.rank == 1).count();
-        (exact as f32 / scored.len() as f32) * 100.0
-    }
-
     // Perplexity is the exponential of the average negative log-likelihood per token.
     // Formula: exp( - (1/N) * Σ ln(P(word_i)) )
     pub fn perplexity(&self) -> f32 {
