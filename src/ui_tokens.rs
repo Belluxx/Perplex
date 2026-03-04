@@ -6,7 +6,7 @@ use egui::{Color32, RichText, Ui, Vec2};
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
 fn format_display_text(text: &str) -> String {
-    text.replace('\n', "↵\n").replace('\t', "→")
+    text.replace('\n', "↵").replace('\t', "→")
 }
 
 fn render_token_label(ui: &mut Ui, display_text: &str, bg_color: Color32) -> egui::Response {
@@ -23,9 +23,10 @@ fn render_token_label(ui: &mut Ui, display_text: &str, bg_color: Color32) -> egu
 }
 
 fn render_tooltip_header(ui: &mut Ui, token_text: &str) {
+    let display = format_display_text(token_text);
     ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.label(
-            RichText::new(token_text)
+            RichText::new(display)
                 .strong()
                 .monospace()
                 .size(15.0)
@@ -78,6 +79,10 @@ fn render_token(
             render_single_tooltip(ui, token);
         }
     });
+
+    if token.text.contains('\n') {
+        ui.end_row();
+    }
 }
 
 // ── Unified-view token rendering ────────────────────────────────────────────
@@ -133,6 +138,10 @@ pub fn render_unified_tokens(
                     render_single_tooltip(ui, t);
                 }
             });
+
+            if display_token.text.contains('\n') {
+                ui.end_row();
+            }
         }
     });
 }
