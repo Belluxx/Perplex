@@ -60,6 +60,14 @@ pub fn error_bg(visuals: &Visuals) -> Color32 {
     )
 }
 
+pub fn warning_bg(visuals: &Visuals) -> Color32 {
+    themed(
+        visuals,
+        Color32::from_rgb(50, 42, 30),
+        Color32::from_rgb(255, 243, 224),
+    )
+}
+
 pub fn progress_bar_fill(visuals: &Visuals) -> Color32 {
     themed(
         visuals,

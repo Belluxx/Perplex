@@ -253,6 +253,42 @@ fn render_progress_bar(ui: &mut Ui, label: &str, progress: Option<f32>) {
 
 // ── Results ─────────────────────────────────────────────────────────────────
 
+/// Check whether two analysis results have compatible tokenizers by comparing
+/// their token text sequences. When the tokenizers match, every token at the
+/// same index covers the same piece of text, which is required for the unified
+/// view and for index-based cross-model comparison in tooltips.
+fn tokenizers_match(a: &AnalysisResult, b: &AnalysisResult) -> bool {
+    if a.tokens.len() != b.tokens.len() {
+        return false;
+    }
+    a.tokens
+        .iter()
+        .zip(b.tokens.iter())
+        .all(|(ta, tb)| ta.text == tb.text)
+}
+
+fn render_tokenizer_warning(ui: &mut Ui) {
+    egui::Frame::none()
+        .fill(colors::warning_bg(ui.visuals()))
+        .rounding(8.0)
+        .inner_margin(10.0)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("⚠").size(16.0));
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(
+                        "The two models use different tokenizers, \
+                         unified view is disabled and token comparison is unavailable.",
+                    )
+                    .color(colors::WARNING)
+                    .size(12.0),
+                );
+            });
+        });
+    ui.add_space(4.0);
+}
+
 pub fn render_results(
     ui: &mut Ui,
     result_a: Option<&AnalysisResult>,
@@ -269,7 +305,23 @@ pub fn render_results(
 
     let both = result_a.is_some() && result_b.is_some();
 
+    let tok_match = if both {
+        tokenizers_match(result_a.unwrap(), result_b.unwrap())
+    } else {
+        false
+    };
+
+    // Force split view when tokenizers differ
+    if both && !tok_match && *view_mode == ViewMode::Unified {
+        *view_mode = ViewMode::Split;
+    }
+
     if both {
+        // Tokenizer mismatch warning
+        if !tok_match {
+            render_tokenizer_warning(ui);
+        }
+
         ui.horizontal(|ui| {
             // Segmented control: Split | Unified
             ui.label(
@@ -280,7 +332,6 @@ pub fn render_results(
             ui.add_space(4.0);
 
             let split_selected = *view_mode == ViewMode::Split;
-            let unified_selected = *view_mode == ViewMode::Unified;
 
             if ui
                 .selectable_label(split_selected, RichText::new("🔀 Split").size(12.0))
@@ -288,11 +339,21 @@ pub fn render_results(
             {
                 *view_mode = ViewMode::Split;
             }
-            if ui
-                .selectable_label(unified_selected, RichText::new("⊞ Unified").size(12.0))
-                .clicked()
-            {
-                *view_mode = ViewMode::Unified;
+
+            // Only allow unified view when tokenizers match
+            if tok_match {
+                let unified_selected = *view_mode == ViewMode::Unified;
+                if ui
+                    .selectable_label(unified_selected, RichText::new("⊞ Unified").size(12.0))
+                    .clicked()
+                {
+                    *view_mode = ViewMode::Unified;
+                }
+            } else {
+                ui.add_enabled_ui(false, |ui| {
+                    ui.selectable_label(false, RichText::new("⊞ Unified").size(12.0))
+                        .on_disabled_hover_text("Unified view requires matching tokenizers");
+                });
             }
 
             if *view_mode == ViewMode::Unified {
@@ -365,6 +426,7 @@ pub fn render_results(
                 model_name_a,
                 model_name_b,
                 height,
+                tok_match,
             );
         }
     } else {
@@ -384,10 +446,24 @@ fn render_dual_results(
     model_name_a: Option<&str>,
     model_name_b: Option<&str>,
     height: f32,
+    tokenizers_compatible: bool,
 ) {
     let label_a = model_name_a.unwrap_or("Model A");
     let label_b = model_name_b.unwrap_or("Model B");
     let scroll_height = (height - 120.0).max(100.0);
+
+    // When tokenizers differ, don't pass the other model's tokens for
+    // index-based comparison — the indices don't correspond to the same text.
+    let other_b = if tokenizers_compatible {
+        Some(result_b.tokens.as_slice())
+    } else {
+        None
+    };
+    let other_a = if tokenizers_compatible {
+        Some(result_a.tokens.as_slice())
+    } else {
+        None
+    };
 
     egui::ScrollArea::vertical()
         .id_salt("results_dual_scroll")
@@ -401,7 +477,7 @@ fn render_dual_results(
                     crate::ui_tokens::render_analyzed_tokens(
                         ui,
                         &result_a.tokens,
-                        Some(&result_b.tokens),
+                        other_b,
                         label_a,
                         label_b,
                     );
@@ -414,7 +490,7 @@ fn render_dual_results(
                     crate::ui_tokens::render_analyzed_tokens(
                         ui,
                         &result_b.tokens,
-                        Some(&result_a.tokens),
+                        other_a,
                         label_b,
                         label_a,
                     );
