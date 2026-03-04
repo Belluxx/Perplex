@@ -39,7 +39,8 @@ struct PerplexApp {
     result_a: Option<analysis::AnalysisResult>,
     result_b: Option<analysis::AnalysisResult>,
     error_message: Option<String>,
-    token_count: Option<usize>,
+    token_count_a: Option<usize>,
+    token_count_b: Option<usize>,
     worker_a: WorkerManager,
     worker_b: WorkerManager,
     view_mode: ViewMode,
@@ -57,7 +58,8 @@ impl Default for PerplexApp {
             result_a: None,
             result_b: None,
             error_message: None,
-            token_count: None,
+            token_count_a: None,
+            token_count_b: None,
             worker_a: WorkerManager::default(),
             worker_b: WorkerManager::default(),
             view_mode: ViewMode::Split,
@@ -169,16 +171,17 @@ impl PerplexApp {
                 match msg {
                     WorkerMessage::ModelLoaded => {
                         log::info!("{} loaded and ready", slot.label());
-                        // Auto-tokenize when primary model (A) finishes loading
-                        if slot == ModelSlot::A && !input_text.is_empty() {
+                        // Auto-tokenize when any model finishes loading
+                        if !input_text.is_empty() {
                             let _ = self
                                 .worker_mut(slot)
                                 .send_command(WorkerCommand::Tokenize(input_text.clone()));
                         }
                     }
-                    WorkerMessage::TokenCount(count) => {
-                        self.token_count = Some(count);
-                    }
+                    WorkerMessage::TokenCount(count) => match slot {
+                        ModelSlot::A => self.token_count_a = Some(count),
+                        ModelSlot::B => self.token_count_b = Some(count),
+                    },
                     WorkerMessage::Completed(result) => {
                         *self.result_mut(slot) = Some(result);
                     }
@@ -257,12 +260,16 @@ impl eframe::App for PerplexApp {
                     &mut self.input_text,
                     not_analyzing,
                     input_height,
-                    self.token_count,
+                    self.token_count_a,
+                    self.token_count_b,
                 ) {
-                    if self.worker_a.is_ready() {
-                        let _ = self
-                            .worker_a
-                            .send_command(WorkerCommand::Tokenize(self.input_text.clone()));
+                    let updated_text = self.input_text.clone();
+                    for slot in ModelSlot::ALL {
+                        if self.worker_mut(slot).is_ready() {
+                            let _ = self
+                                .worker_mut(slot)
+                                .send_command(WorkerCommand::Tokenize(updated_text.clone()));
+                        }
                     }
                 }
 

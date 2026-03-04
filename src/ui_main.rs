@@ -156,7 +156,8 @@ pub fn render_text_input(
     text: &mut String,
     enabled: bool,
     height: f32,
-    token_count: Option<usize>,
+    token_count_a: Option<usize>,
+    token_count_b: Option<usize>,
 ) -> bool {
     ui.add_space(12.0);
 
@@ -167,13 +168,51 @@ pub fn render_text_input(
                 .color(colors::text_primary(ui.visuals())),
         );
 
-        if let Some(count) = token_count {
+        let has_any = token_count_a.is_some() || token_count_b.is_some();
+        if has_any {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new(format!("{} tokens", count))
-                        .color(colors::text_muted(ui.visuals()))
-                        .size(12.0),
-                );
+                // Right-to-left layout reverses visual order, so add items
+                // in reverse so they appear left-to-right on screen.
+                match (token_count_a, token_count_b) {
+                    (Some(a), Some(b)) if a == b => {
+                        ui.label(
+                            RichText::new(format!("{} tokens", a))
+                                .color(colors::text_muted(ui.visuals()))
+                                .size(12.0),
+                        );
+                    }
+                    (Some(a), Some(b)) => {
+                        // Show both counts, attributed by color
+                        ui.label(
+                            RichText::new(format!("{}", b))
+                                .color(colors::WARNING)
+                                .size(12.0),
+                        );
+                        ui.label(
+                            RichText::new("/")
+                                .color(colors::text_muted(ui.visuals()))
+                                .size(12.0),
+                        );
+                        ui.label(
+                            RichText::new(format!("{}", a))
+                                .color(colors::INFO)
+                                .size(12.0),
+                        );
+                        ui.label(
+                            RichText::new("tokens:")
+                                .color(colors::text_muted(ui.visuals()))
+                                .size(12.0),
+                        );
+                    }
+                    (Some(count), None) | (None, Some(count)) => {
+                        ui.label(
+                            RichText::new(format!("{} tokens", count))
+                                .color(colors::text_muted(ui.visuals()))
+                                .size(12.0),
+                        );
+                    }
+                    (None, None) => unreachable!(),
+                }
             });
         }
     });
