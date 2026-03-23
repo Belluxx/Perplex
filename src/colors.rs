@@ -90,12 +90,16 @@ pub fn rank_to_color(rank: usize) -> Color32 {
     }
 }
 
+fn lerp_channel(a: u8, b: u8, t: f32) -> u8 {
+    (a as f32 + (b as f32 - a as f32) * t) as u8
+}
+
 pub fn interpolate_color(start: Color32, end: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     Color32::from_rgb(
-        (start.r() as f32 + (end.r() as f32 - start.r() as f32) * t) as u8,
-        (start.g() as f32 + (end.g() as f32 - start.g() as f32) * t) as u8,
-        (start.b() as f32 + (end.b() as f32 - start.b() as f32) * t) as u8,
+        lerp_channel(start.r(), end.r(), t),
+        lerp_channel(start.g(), end.g(), t),
+        lerp_channel(start.b(), end.b(), t),
     )
 }
 

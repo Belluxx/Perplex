@@ -623,39 +623,40 @@ fn render_stats_bar(ui: &mut Ui, result: &AnalysisResult) {
 
 // ── Legend ───────────────────────────────────────────────────────────────────
 
-fn render_legend(ui: &mut Ui) {
+fn render_legend_row(ui: &mut Ui, title: &str, swatches: &[(Color32, &str)]) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Legend (rank):").size(12.0));
+        ui.label(RichText::new(title).size(12.0));
         ui.add_space(8.0);
-
-        legend_swatch(ui, colors::RANK_PERFECT, "1");
-        legend_swatch(ui, colors::RANK_GOOD_START, "2-10");
-        legend_swatch(ui, colors::RANK_MODERATE, "11-50");
-        legend_swatch(ui, colors::RANK_POOR, "> 50");
+        for &(color, label) in swatches {
+            legend_swatch(ui, color, label);
+        }
     });
+}
+
+fn render_legend(ui: &mut Ui) {
+    render_legend_row(ui, "Legend (rank):", &[
+        (colors::RANK_PERFECT, "1"),
+        (colors::RANK_GOOD_START, "2-10"),
+        (colors::RANK_MODERATE, "11-50"),
+        (colors::RANK_POOR, "> 50"),
+    ]);
 }
 
 fn render_divergence_legend(ui: &mut Ui) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Legend (divergence):").size(12.0));
-        ui.add_space(8.0);
-
-        legend_swatch(ui, colors::rank_divergence_color(1, 1), "Agree");
-        legend_swatch(ui, colors::rank_divergence_color(1, 20), "Some divergence");
-        legend_swatch(ui, colors::rank_divergence_color(1, 200), "Disagree");
-    });
+    render_legend_row(ui, "Legend (divergence):", &[
+        (colors::rank_divergence_color(1, 1), "Agree"),
+        (colors::rank_divergence_color(1, 20), "Some divergence"),
+        (colors::rank_divergence_color(1, 200), "Disagree"),
+    ]);
 }
 
 fn render_prob_legend(ui: &mut Ui) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Legend (probability):").size(12.0));
-        ui.add_space(8.0);
-
-        legend_swatch(ui, colors::prob_to_color(0.75), ">50%");
-        legend_swatch(ui, colors::prob_to_color(0.25), "10-50%");
-        legend_swatch(ui, colors::prob_to_color(0.05), "1-10%");
-        legend_swatch(ui, colors::prob_to_color(0.005), "<1%");
-    });
+    render_legend_row(ui, "Legend (probability):", &[
+        (colors::prob_to_color(0.75), ">50%"),
+        (colors::prob_to_color(0.25), "10-50%"),
+        (colors::prob_to_color(0.05), "1-10%"),
+        (colors::prob_to_color(0.005), "<1%"),
+    ]);
 }
 
 fn legend_swatch(ui: &mut Ui, color: Color32, label: &str) {
