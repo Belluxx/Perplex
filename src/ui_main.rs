@@ -40,14 +40,21 @@ impl std::fmt::Display for UnifiedColorMode {
 
 // ── Header ──────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
+pub struct HeaderAction {
+    pub settings: bool,
+    pub eject_a: bool,
+    pub eject_b: bool,
+}
+
 pub fn render_header(
     ui: &mut Ui,
     model_path_a: Option<&str>,
     model_path_b: Option<&str>,
     is_loading_a: bool,
     is_loading_b: bool,
-) -> bool {
-    let mut settings_clicked = false;
+) -> HeaderAction {
+    let mut action = HeaderAction::default();
     ui.horizontal(|ui| {
         ui.heading(
             RichText::new("🔮 Perplex")
@@ -58,9 +65,13 @@ pub fn render_header(
         ui.add_space(20.0);
 
         ui.vertical(|ui| {
-            render_model_badge(ui, colors::INFO, model_path_a, is_loading_a);
+            if render_model_badge(ui, colors::INFO, model_path_a, is_loading_a) {
+                action.eject_a = true;
+            }
             ui.add_space(2.0);
-            render_model_badge(ui, colors::WARNING, model_path_b, is_loading_b);
+            if render_model_badge(ui, colors::WARNING, model_path_b, is_loading_b) {
+                action.eject_b = true;
+            }
         });
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -68,17 +79,19 @@ pub fn render_header(
                 .add(egui::Button::new(RichText::new("⚙").size(18.0)))
                 .clicked()
             {
-                settings_clicked = true;
+                action.settings = true;
             }
         });
     });
 
     ui.add_space(8.0);
     ui.separator();
-    settings_clicked
+    action
 }
 
-fn render_model_badge(ui: &mut Ui, color: Color32, path: Option<&str>, is_loading: bool) {
+/// Returns true if the eject button was clicked.
+fn render_model_badge(ui: &mut Ui, color: Color32, path: Option<&str>, is_loading: bool) -> bool {
+    let mut ejected = false;
     if is_loading {
         ui.horizontal(|ui| {
             ui.spinner();
@@ -86,11 +99,23 @@ fn render_model_badge(ui: &mut Ui, color: Color32, path: Option<&str>, is_loadin
         });
     } else if let Some(p) = path {
         let name = crate::model_name_from_path(Some(p)).unwrap_or(p);
-        ui.label(
-            RichText::new(format!("📦 {}", name))
-                .color(color)
-                .size(12.0),
-        );
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("📦 {}", name))
+                    .color(color)
+                    .size(12.0),
+            );
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("⏏").size(12.0))
+                        .frame(false),
+                )
+                .on_hover_text("Eject model")
+                .clicked()
+            {
+                ejected = true;
+            }
+        });
     } else {
         ui.label(
             RichText::new("❌ None")
@@ -98,6 +123,7 @@ fn render_model_badge(ui: &mut Ui, color: Color32, path: Option<&str>, is_loadin
                 .size(12.0),
         );
     }
+    ejected
 }
 
 // ── Model selection panel ───────────────────────────────────────────────────

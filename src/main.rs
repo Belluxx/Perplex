@@ -362,19 +362,26 @@ impl eframe::App for PerplexApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::Frame::none().inner_margin(20.0).show(ui, |ui| {
-                if ui_main::render_header(
+                let header = ui_main::render_header(
                     ui,
                     self.settings.model_path_a.as_deref(),
                     self.settings.model_path_b.as_deref(),
                     self.worker_a.is_loading,
                     self.worker_b.is_loading,
-                ) {
+                );
+                if header.settings {
                     self.show_settings = true;
                     for slot in ModelSlot::ALL {
                         *self.settings_path_buffer_mut(slot) =
                             self.model_path_mut(slot).clone().unwrap_or_default();
                     }
                     self.settings_preload_buffer = self.settings.preload_mode;
+                }
+                if header.eject_a {
+                    self.clear_model(ModelSlot::A);
+                }
+                if header.eject_b {
+                    self.clear_model(ModelSlot::B);
                 }
 
                 ui.add_space(12.0);
