@@ -6,6 +6,7 @@ use crate::analysis::AnalysisResult;
 #[derive(Debug)]
 pub enum WorkerMessage {
     ModelLoaded,
+    ModelUnloaded,
     Started,
     Progress { current: usize, total: usize },
     Completed(AnalysisResult),
@@ -15,16 +16,18 @@ pub enum WorkerMessage {
 
 #[derive(Debug)]
 pub enum WorkerCommand {
+    LoadModel(String),
+    UnloadModel,
     Analyze(String),
     Tokenize(String),
     Shutdown,
 }
 
-/// Manages the background worker thread that loads and runs the LLM.
+/// Manages a persistent background worker thread for LLM operations.
 ///
-/// Owns the communication channels and thread handle, and tracks
-/// worker-level state (loading, analyzing, progress). The application
-/// layer polls messages via [`poll_messages`] and reacts to them.
+/// The worker thread is spawned once and kept alive for the duration of
+/// the manager. Model loading and unloading are handled via commands,
+/// allowing future JIT model swapping without restarting threads.
 pub struct WorkerManager {
     tx: Option<mpsc::Sender<WorkerCommand>>,
     rx: Option<mpsc::Receiver<WorkerMessage>>,
@@ -32,41 +35,47 @@ pub struct WorkerManager {
     pub is_loading: bool,
     pub is_analyzing: bool,
     pub progress: Option<f32>,
-}
-
-impl Default for WorkerManager {
-    fn default() -> Self {
-        Self {
-            tx: None,
-            rx: None,
-            handle: None,
-            is_loading: false,
-            is_analyzing: false,
-            progress: None,
-        }
-    }
+    pub has_model: bool,
 }
 
 impl WorkerManager {
-    /// Shuts down any existing worker, then spawns a new one for the given model path.
-    pub fn load_model(&mut self, path: String) {
-        self.shutdown();
+    /// Creates a new manager and spawns its persistent worker thread.
+    pub fn new() -> Self {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (msg_tx, msg_rx) = mpsc::channel();
 
+        let handle = thread::spawn(move || {
+            crate::llamacpp::run_worker(cmd_rx, msg_tx);
+        });
+
+        Self {
+            tx: Some(cmd_tx),
+            rx: Some(msg_rx),
+            handle: Some(handle),
+            is_loading: false,
+            is_analyzing: false,
+            progress: None,
+            has_model: false,
+        }
+    }
+
+    /// Sends a LoadModel command to the worker thread.
+    pub fn load_model(&mut self, path: String) {
         self.is_loading = true;
         self.is_analyzing = false;
         self.progress = None;
 
-        let (cmd_tx, cmd_rx) = mpsc::channel();
-        let (msg_tx, msg_rx) = mpsc::channel();
+        if let Some(ref tx) = self.tx {
+            let _ = tx.send(WorkerCommand::LoadModel(path));
+        }
+    }
 
-        self.tx = Some(cmd_tx);
-        self.rx = Some(msg_rx);
-
-        let handle = thread::spawn(move || {
-            crate::llamacpp::run_analysis_worker(path, cmd_rx, msg_tx);
-        });
-
-        self.handle = Some(handle);
+    /// Sends an UnloadModel command to the worker thread.
+    pub fn unload_model(&mut self) {
+        if let Some(ref tx) = self.tx {
+            let _ = tx.send(WorkerCommand::UnloadModel);
+        }
+        self.has_model = false;
     }
 
     /// Sends a command to the worker thread. Returns an error if no worker is active.
@@ -80,7 +89,7 @@ impl WorkerManager {
     }
 
     /// Drains all pending messages from the worker, updating internal state
-    /// (`is_loading`, `is_analyzing`, `progress`) as it goes.
+    /// (`is_loading`, `is_analyzing`, `progress`, `has_model`) as it goes.
     ///
     /// Returns the messages so the application can react to them
     /// (e.g. storing results, displaying errors).
@@ -92,6 +101,10 @@ impl WorkerManager {
                 match &msg {
                     WorkerMessage::ModelLoaded => {
                         self.is_loading = false;
+                        self.has_model = true;
+                    }
+                    WorkerMessage::ModelUnloaded => {
+                        self.has_model = false;
                     }
                     WorkerMessage::Started => {
                         self.is_analyzing = true;
@@ -118,9 +131,9 @@ impl WorkerManager {
         messages
     }
 
-    /// Returns `true` if a worker is connected and the model has finished loading.
+    /// Returns `true` if a model is loaded and the worker is idle.
     pub fn is_ready(&self) -> bool {
-        self.tx.is_some() && !self.is_loading
+        self.has_model && !self.is_loading
     }
 
     /// Sends a shutdown command and joins the worker thread.
@@ -132,5 +145,6 @@ impl WorkerManager {
             let _ = handle.join();
         }
         self.rx = None;
+        self.has_model = false;
     }
 }

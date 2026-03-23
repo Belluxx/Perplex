@@ -11,7 +11,7 @@ use eframe::egui;
 
 use crate::settings::Settings;
 use crate::ui_main::{UnifiedColorMode, ViewMode};
-use crate::worker::{WorkerCommand, WorkerManager, WorkerMessage};
+use crate::worker::{WorkerCommand, WorkerManager};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ModelSlot {
@@ -60,8 +60,8 @@ impl Default for PerplexApp {
             error_message: None,
             token_count_a: None,
             token_count_b: None,
-            worker_a: WorkerManager::default(),
-            worker_b: WorkerManager::default(),
+            worker_a: WorkerManager::new(),
+            worker_b: WorkerManager::new(),
             view_mode: ViewMode::Split,
             unified_color_mode: UnifiedColorMode::AvgRank,
         }
@@ -128,7 +128,7 @@ impl PerplexApp {
     fn clear_model(&mut self, slot: ModelSlot) {
         *self.model_path_mut(slot) = None;
         self.save_settings();
-        self.worker_mut(slot).shutdown();
+        self.worker_mut(slot).unload_model();
         *self.result_mut(slot) = None;
     }
 
@@ -169,7 +169,7 @@ impl PerplexApp {
             let messages = self.worker_mut(slot).poll_messages();
             for msg in messages {
                 match msg {
-                    WorkerMessage::ModelLoaded => {
+                    worker::WorkerMessage::ModelLoaded => {
                         log::info!("{} loaded and ready", slot.label());
                         // Auto-tokenize when any model finishes loading
                         if !input_text.is_empty() {
@@ -178,17 +178,24 @@ impl PerplexApp {
                                 .send_command(WorkerCommand::Tokenize(input_text.clone()));
                         }
                     }
-                    WorkerMessage::TokenCount(count) => match slot {
+                    worker::WorkerMessage::ModelUnloaded => {
+                        log::info!("{} unloaded", slot.label());
+                        match slot {
+                            ModelSlot::A => self.token_count_a = None,
+                            ModelSlot::B => self.token_count_b = None,
+                        }
+                    }
+                    worker::WorkerMessage::TokenCount(count) => match slot {
                         ModelSlot::A => self.token_count_a = Some(count),
                         ModelSlot::B => self.token_count_b = Some(count),
                     },
-                    WorkerMessage::Completed(result) => {
+                    worker::WorkerMessage::Completed(result) => {
                         *self.result_mut(slot) = Some(result);
                     }
-                    WorkerMessage::Error(error) => {
+                    worker::WorkerMessage::Error(error) => {
                         self.append_error(format!("{}: {}", slot.label(), error));
                     }
-                    WorkerMessage::Started | WorkerMessage::Progress { .. } => {}
+                    worker::WorkerMessage::Started | worker::WorkerMessage::Progress { .. } => {}
                 }
             }
         }

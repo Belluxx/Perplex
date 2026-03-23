@@ -20,14 +20,19 @@ use crate::analysis::{AnalysisResult, AnalyzedToken};
 use crate::worker::{WorkerCommand, WorkerMessage};
 
 pub struct LlamaAnalyzer {
-    model: LlamaModel,
-    backend: &'static LlamaBackend,
+    model: Option<LlamaModel>,
 }
 
 impl LlamaAnalyzer {
-    pub fn new<P: AsRef<Path>>(model_path: P) -> Result<Self, String> {
-        let path_str = model_path.as_ref().to_string_lossy().to_string();
+    pub fn new() -> Self {
+        Self { model: None }
+    }
 
+    pub fn load_model<P: AsRef<Path>>(&mut self, model_path: P) -> Result<(), String> {
+        // Drop existing model first to free VRAM before loading the new one.
+        self.unload_model();
+
+        let path_str = model_path.as_ref().to_string_lossy().to_string();
         let backend = get_backend();
 
         log::info!("Loading model from: {}", path_str);
@@ -38,8 +43,22 @@ impl LlamaAnalyzer {
             .map_err(|e| format!("Failed to load model: {}", e))?;
 
         log::info!("Model loaded");
+        self.model = Some(model);
+        Ok(())
+    }
 
-        Ok(Self { model, backend })
+    pub fn unload_model(&mut self) {
+        if self.model.take().is_some() {
+            log::info!("Model unloaded, VRAM freed");
+        }
+    }
+
+    pub fn is_loaded(&self) -> bool {
+        self.model.is_some()
+    }
+
+    fn model(&self) -> Result<&LlamaModel, String> {
+        self.model.as_ref().ok_or_else(|| "No model loaded".to_string())
     }
 
     pub fn analyze(
@@ -47,6 +66,8 @@ impl LlamaAnalyzer {
         text: &str,
         progress_tx: Option<&mpsc::Sender<WorkerMessage>>,
     ) -> Result<AnalysisResult, String> {
+        let model = self.model()?;
+        let backend = get_backend();
         let start_time = std::time::Instant::now();
 
         if let Some(tx) = progress_tx {
@@ -56,8 +77,7 @@ impl LlamaAnalyzer {
             });
         }
 
-        let tokens = self
-            .model
+        let tokens = model
             .str_to_token(text, llama_cpp_2::model::AddBos::Always)
             .map_err(|e| format!("Failed to tokenize: {}", e))?;
 
@@ -86,9 +106,8 @@ impl LlamaAnalyzer {
             .with_n_ctx(NonZeroU32::new(n_ctx))
             .with_n_batch(n_batch);
 
-        let mut ctx = self
-            .model
-            .new_context(&self.backend, ctx_params)
+        let mut ctx = model
+            .new_context(backend, ctx_params)
             .map_err(|e| format!("Failed to create context: {}", e))?;
 
         let mut compact_results: Vec<(usize, f32, Vec<(i32, f32)>)> =
@@ -168,8 +187,7 @@ impl LlamaAnalyzer {
             .iter()
             .enumerate()
             .map(|(i, &token)| {
-                let token_text = self
-                    .model
+                let token_text = model
                     .token_to_piece(token, &mut decoder, true, None)
                     .unwrap_or_else(|_| format!("[{}]", token.0));
 
@@ -182,8 +200,7 @@ impl LlamaAnalyzer {
                 let top_predictions: Vec<(String, f32)> = top_preds_raw
                     .into_iter()
                     .map(|(id, prob)| {
-                        let pred_text = self
-                            .model
+                        let pred_text = model
                             .token_to_piece(
                                 llama_cpp_2::token::LlamaToken(id),
                                 &mut decoder,
@@ -262,37 +279,46 @@ impl LlamaAnalyzer {
     }
 
     pub fn count_tokens(&self, text: &str) -> usize {
-        match self
-            .model
-            .str_to_token(text, llama_cpp_2::model::AddBos::Never)
-        {
+        let model = match self.model() {
+            Ok(m) => m,
+            Err(_) => return 0,
+        };
+        match model.str_to_token(text, llama_cpp_2::model::AddBos::Never) {
             Ok(tokens) => tokens.len(),
             Err(_) => 0,
         }
     }
 }
 
-pub fn run_analysis_worker(
-    model_path: String,
+/// Persistent worker loop that handles model lifecycle and analysis commands.
+/// The worker starts with no model loaded and responds to LoadModel/UnloadModel
+/// commands, enabling future JIT model swapping to conserve VRAM.
+pub fn run_worker(
     cmd_rx: mpsc::Receiver<WorkerCommand>,
     msg_tx: mpsc::Sender<WorkerMessage>,
 ) {
-    log::info!("Analysis worker starting...");
+    log::info!("Worker started, waiting for commands...");
 
-    let analyzer = match LlamaAnalyzer::new(&model_path) {
-        Ok(a) => a,
-        Err(e) => {
-            let _ = msg_tx.send(WorkerMessage::Error(format!("Failed to load model: {}", e)));
-            return;
-        }
-    };
-
-    log::info!("Model loaded, waiting for commands...");
-
-    let _ = msg_tx.send(WorkerMessage::ModelLoaded);
+    let mut analyzer = LlamaAnalyzer::new();
 
     loop {
         match cmd_rx.recv() {
+            Ok(WorkerCommand::LoadModel(path)) => {
+                match analyzer.load_model(&path) {
+                    Ok(()) => {
+                        let _ = msg_tx.send(WorkerMessage::ModelLoaded);
+                    }
+                    Err(e) => {
+                        let _ = msg_tx.send(WorkerMessage::Error(
+                            format!("Failed to load model: {}", e),
+                        ));
+                    }
+                }
+            }
+            Ok(WorkerCommand::UnloadModel) => {
+                analyzer.unload_model();
+                let _ = msg_tx.send(WorkerMessage::ModelUnloaded);
+            }
             Ok(WorkerCommand::Analyze(text)) => {
                 let _ = msg_tx.send(WorkerMessage::Started);
 
