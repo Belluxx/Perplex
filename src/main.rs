@@ -9,7 +9,7 @@ mod worker;
 
 use eframe::egui;
 
-use crate::settings::Settings;
+use crate::settings::{PreloadMode, Settings};
 use crate::ui_main::{UnifiedColorMode, ViewMode};
 use crate::worker::{WorkerCommand, WorkerManager};
 
@@ -49,7 +49,7 @@ struct PerplexApp {
     show_settings: bool,
     settings_path_buffer_a: String,
     settings_path_buffer_b: String,
-    settings_parallel_buffer: bool,
+    settings_preload_buffer: PreloadMode,
     input_text: String,
     result_a: Option<analysis::AnalysisResult>,
     result_b: Option<analysis::AnalysisResult>,
@@ -71,7 +71,7 @@ impl Default for PerplexApp {
             show_settings: false,
             settings_path_buffer_a: String::new(),
             settings_path_buffer_b: String::new(),
-            settings_parallel_buffer: false,
+            settings_preload_buffer: PreloadMode::PreloadSingle,
             input_text: String::new(),
             result_a: None,
             result_b: None,
@@ -95,15 +95,7 @@ impl PerplexApp {
         let mut app = Self::default();
         app.settings = Settings::load();
 
-        // In parallel mode, preload models immediately.
-        if app.settings.parallel_mode {
-            for slot in ModelSlot::ALL {
-                if let Some(path) = app.model_path(slot).cloned() {
-                    app.worker_mut(slot).load_model(path);
-                }
-            }
-        }
-
+        app.apply_preload_policy();
         app
     }
 
@@ -154,10 +146,7 @@ impl PerplexApp {
         self.error_message = None;
         *self.result_mut(slot) = None;
 
-        // Only preload in parallel mode.
-        if self.settings.parallel_mode {
-            self.worker_mut(slot).load_model(path);
-        }
+        self.apply_preload_policy();
     }
 
     fn clear_model(&mut self, slot: ModelSlot) {
@@ -186,37 +175,38 @@ impl PerplexApp {
         let text = self.input_text.clone();
         self.error_message = None;
 
-        if self.settings.parallel_mode {
-            // Parallel: both models are preloaded, send analyze to each.
-            for slot in ModelSlot::ALL {
-                if self.worker_mut(slot).is_ready() {
-                    let _ = self
-                        .worker_mut(slot)
-                        .send_command(WorkerCommand::Analyze(text.clone()));
-                }
-            }
-        } else {
+        let both_configured = self.settings.model_path_a.is_some()
+            && self.settings.model_path_b.is_some();
+
+        if both_configured && !self.is_parallel() {
             // JIT: load → analyze → unload, one model at a time.
             self.jit_pending_text = text.clone();
             self.result_a = None;
             self.result_b = None;
 
-            if self.settings.model_path_a.is_some() {
-                self.jit_phase = JitPhase::RunningA;
-                let path = self.settings.model_path_a.clone().unwrap();
+            self.jit_phase = JitPhase::RunningA;
+            let path = self.settings.model_path_a.clone().unwrap();
+            if !self.worker_a.has_model {
                 self.worker_a.load_model(path);
-                // The Analyze command is queued after LoadModel — the worker
-                // processes commands in order, so this runs once loading completes.
-                let _ = self
-                    .worker_a
-                    .send_command(WorkerCommand::Analyze(text));
-            } else if self.settings.model_path_b.is_some() {
-                self.jit_phase = JitPhase::RunningB;
-                let path = self.settings.model_path_b.clone().unwrap();
-                self.worker_b.load_model(path);
-                let _ = self
-                    .worker_b
-                    .send_command(WorkerCommand::Analyze(text));
+            }
+            // Queued after LoadModel — runs once loading completes.
+            let _ = self
+                .worker_a
+                .send_command(WorkerCommand::Analyze(text));
+        } else {
+            // Single model or parallel: send analyze to each ready/configured slot.
+            // If a model isn't loaded yet, load it first.
+            for slot in ModelSlot::ALL {
+                if self.model_path(slot).is_some() {
+                    let worker = self.worker_mut(slot);
+                    if !worker.has_model && !worker.is_loading {
+                        let path = self.model_path(slot).cloned().unwrap();
+                        self.worker_mut(slot).load_model(path);
+                    }
+                    let _ = self
+                        .worker_mut(slot)
+                        .send_command(WorkerCommand::Analyze(text.clone()));
+                }
             }
         }
     }
@@ -230,11 +220,8 @@ impl PerplexApp {
                 match msg {
                     worker::WorkerMessage::ModelLoaded => {
                         log::info!("{} loaded and ready", slot.label());
-                        // In parallel mode, auto-tokenize on load.
-                        if self.settings.parallel_mode
-                            && self.jit_phase == JitPhase::Idle
-                            && !input_text.is_empty()
-                        {
+                        // Auto-tokenize when a preloaded model finishes loading.
+                        if self.jit_phase == JitPhase::Idle && !input_text.is_empty() {
                             let _ = self
                                 .worker_mut(slot)
                                 .send_command(WorkerCommand::Tokenize(input_text.clone()));
@@ -308,6 +295,45 @@ impl PerplexApp {
         }
     }
 
+    /// Whether a given slot should be preloaded under the current settings.
+    fn should_preload(&self, slot: ModelSlot) -> bool {
+        if self.model_path(slot).is_none() {
+            return false;
+        }
+        match self.settings.preload_mode {
+            PreloadMode::PreloadAll => true,
+            PreloadMode::PreloadSingle => {
+                // Only preload when exactly one model is configured.
+                let count = self.settings.model_path_a.is_some() as u8
+                    + self.settings.model_path_b.is_some() as u8;
+                count == 1
+            }
+            PreloadMode::NoPreload => false,
+        }
+    }
+
+    /// Loads or unloads models to match the current preload policy.
+    fn apply_preload_policy(&mut self) {
+        for slot in ModelSlot::ALL {
+            let should = self.should_preload(slot);
+            let worker = self.worker_mut(slot);
+            if should && !worker.has_model && !worker.is_loading {
+                if let Some(path) = self.model_path(slot).cloned() {
+                    self.worker_mut(slot).load_model(path);
+                }
+            } else if !should && worker.has_model {
+                self.worker_mut(slot).unload_model();
+            }
+        }
+    }
+
+    /// Whether preloaded models can serve the analysis (no JIT needed).
+    fn is_parallel(&self) -> bool {
+        self.settings.preload_mode == PreloadMode::PreloadAll
+            && self.settings.model_path_a.is_some()
+            && self.settings.model_path_b.is_some()
+    }
+
     fn has_any_model(&self) -> bool {
         self.settings.model_path_a.is_some() || self.settings.model_path_b.is_some()
     }
@@ -348,7 +374,7 @@ impl eframe::App for PerplexApp {
                         *self.settings_path_buffer_mut(slot) =
                             self.model_path_mut(slot).clone().unwrap_or_default();
                     }
-                    self.settings_parallel_buffer = self.settings.parallel_mode;
+                    self.settings_preload_buffer = self.settings.preload_mode;
                 }
 
                 ui.add_space(12.0);
@@ -382,17 +408,15 @@ impl eframe::App for PerplexApp {
                     self.token_count_a,
                     self.token_count_b,
                 ) {
-                    // Live token counts only available in parallel mode (models preloaded).
-                    if self.settings.parallel_mode {
-                        let updated_text = self.input_text.clone();
-                        for slot in ModelSlot::ALL {
-                            if self.worker_mut(slot).is_ready() {
-                                let _ = self
-                                    .worker_mut(slot)
-                                    .send_command(WorkerCommand::Tokenize(
-                                        updated_text.clone(),
-                                    ));
-                            }
+                    // Live token counts when models are preloaded.
+                    let updated_text = self.input_text.clone();
+                    for slot in ModelSlot::ALL {
+                        if self.worker_mut(slot).is_ready() {
+                            let _ = self
+                                .worker_mut(slot)
+                                .send_command(WorkerCommand::Tokenize(
+                                    updated_text.clone(),
+                                ));
                         }
                     }
                 }
@@ -436,7 +460,7 @@ impl eframe::App for PerplexApp {
                 &mut self.show_settings,
                 &mut self.settings_path_buffer_a,
                 &mut self.settings_path_buffer_b,
-                &mut self.settings_parallel_buffer,
+                &mut self.settings_preload_buffer,
             ) {
                 match action {
                     ui_settings::SettingsAction::Browse(slot) => {
@@ -447,14 +471,12 @@ impl eframe::App for PerplexApp {
                     ui_settings::SettingsAction::Save => {
                         self.show_settings = false;
 
-                        let was_parallel = self.settings.parallel_mode;
-                        self.settings.parallel_mode = self.settings_parallel_buffer;
+                        self.settings.preload_mode = self.settings_preload_buffer;
 
                         for slot in ModelSlot::ALL {
                             let path = self.settings_path_buffer_mut(slot).clone();
                             if !path.is_empty() {
                                 if self.model_path_mut(slot).as_deref() != Some(&path) {
-                                    // Path changed — store and handle loading below.
                                     *self.model_path_mut(slot) = Some(path);
                                     *self.result_mut(slot) = None;
                                 }
@@ -467,38 +489,7 @@ impl eframe::App for PerplexApp {
                             }
                         }
 
-                        // React to parallel mode change.
-                        if self.settings.parallel_mode && !was_parallel {
-                            // Switched to parallel: preload all configured models.
-                            for slot in ModelSlot::ALL {
-                                if let Some(path) = self.model_path(slot).cloned() {
-                                    if !self.worker_mut(slot).has_model
-                                        && !self.worker_mut(slot).is_loading
-                                    {
-                                        self.worker_mut(slot).load_model(path);
-                                    }
-                                }
-                            }
-                        } else if !self.settings.parallel_mode && was_parallel {
-                            // Switched to JIT: unload all models.
-                            for slot in ModelSlot::ALL {
-                                if self.worker_mut(slot).has_model {
-                                    self.worker_mut(slot).unload_model();
-                                }
-                            }
-                        } else if self.settings.parallel_mode {
-                            // Parallel mode stayed on: preload any new models.
-                            for slot in ModelSlot::ALL {
-                                if let Some(path) = self.model_path(slot).cloned() {
-                                    if !self.worker_mut(slot).has_model
-                                        && !self.worker_mut(slot).is_loading
-                                    {
-                                        self.worker_mut(slot).load_model(path);
-                                    }
-                                }
-                            }
-                        }
-
+                        self.apply_preload_policy();
                         self.save_settings();
                     }
                     ui_settings::SettingsAction::Clear(slot) => {

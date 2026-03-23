@@ -5,14 +5,32 @@ use std::path::PathBuf;
 
 const SETTINGS_FILE_NAME: &str = ".perplex_settings.json";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreloadMode {
+    /// Keep both models loaded in VRAM at the same time.
+    PreloadAll,
+    /// Preload only when a single model is configured.
+    PreloadSingle,
+    /// Never preload — always JIT load on demand.
+    NoPreload,
+}
+
+impl std::fmt::Display for PreloadMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PreloadMode::PreloadAll => write!(f, "Preload both models (more VRAM)"),
+            PreloadMode::PreloadSingle => write!(f, "Preload only single model (less VRAM)"),
+            PreloadMode::NoPreload => write!(f, "Do not preload models"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub model_path_a: Option<String>,
     pub model_path_b: Option<String>,
-    /// When true, both models stay loaded in VRAM simultaneously.
-    /// When false (default), models are loaded one at a time to save VRAM.
-    pub parallel_mode: bool,
+    pub preload_mode: PreloadMode,
 }
 
 impl Default for Settings {
@@ -20,7 +38,7 @@ impl Default for Settings {
         Self {
             model_path_a: None,
             model_path_b: None,
-            parallel_mode: false,
+            preload_mode: PreloadMode::PreloadSingle,
         }
     }
 }

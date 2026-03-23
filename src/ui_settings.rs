@@ -1,5 +1,6 @@
 use egui::RichText;
 
+use crate::settings::PreloadMode;
 use crate::ModelSlot;
 
 pub enum SettingsAction {
@@ -13,7 +14,7 @@ pub fn render_settings_window(
     open: &mut bool,
     path_buffer_a: &mut String,
     path_buffer_b: &mut String,
-    parallel_mode: &mut bool,
+    preload_mode: &mut PreloadMode,
 ) -> Option<SettingsAction> {
     let mut action = None;
 
@@ -35,11 +36,26 @@ pub fn render_settings_window(
             ui.heading("Loading Mode");
             ui.add_space(6.0);
 
-            ui.checkbox(parallel_mode, "Parallel mode")
-                .on_hover_text(
-                    "Keep both models loaded in VRAM at the same time.\n\
-                     When off (default), models are loaded one at a time to save VRAM.",
-                );
+            egui::ComboBox::from_id_salt("preload_mode")
+                .selected_text(preload_mode.to_string())
+                .width(280.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        preload_mode,
+                        PreloadMode::PreloadAll,
+                        PreloadMode::PreloadAll.to_string(),
+                    );
+                    ui.selectable_value(
+                        preload_mode,
+                        PreloadMode::PreloadSingle,
+                        PreloadMode::PreloadSingle.to_string(),
+                    );
+                    ui.selectable_value(
+                        preload_mode,
+                        PreloadMode::NoPreload,
+                        PreloadMode::NoPreload.to_string(),
+                    );
+                });
 
             ui.add_space(12.0);
 
