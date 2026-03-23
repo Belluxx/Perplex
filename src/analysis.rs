@@ -37,7 +37,7 @@ impl AnalysisResult {
             return 0.0;
         }
         let ppl = self.perplexity();
-        let n = self.tokens.len() as f32;
+        let n = self.scored_tokens().len() as f32;
         n * ppl.log2()
     }
 }
