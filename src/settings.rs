@@ -5,11 +5,24 @@ use std::path::PathBuf;
 
 const SETTINGS_FILE_NAME: &str = ".perplex_settings.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub model_path_a: Option<String>,
     pub model_path_b: Option<String>,
+    /// When true, both models stay loaded in VRAM simultaneously.
+    /// When false (default), models are loaded one at a time to save VRAM.
+    pub parallel_mode: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            model_path_a: None,
+            model_path_b: None,
+            parallel_mode: false,
+        }
+    }
 }
 
 impl Settings {

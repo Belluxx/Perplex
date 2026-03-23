@@ -13,6 +13,7 @@ pub fn render_settings_window(
     open: &mut bool,
     path_buffer_a: &mut String,
     path_buffer_b: &mut String,
+    parallel_mode: &mut bool,
 ) -> Option<SettingsAction> {
     let mut action = None;
 
@@ -28,6 +29,17 @@ pub fn render_settings_window(
             ui.add_space(8.0);
 
             render_model_group(ui, "Model B", path_buffer_b, &mut action, ModelSlot::B);
+
+            ui.add_space(12.0);
+
+            ui.heading("Loading Mode");
+            ui.add_space(6.0);
+
+            ui.checkbox(parallel_mode, "Parallel mode")
+                .on_hover_text(
+                    "Keep both models loaded in VRAM at the same time.\n\
+                     When off (default), models are loaded one at a time to save VRAM.",
+                );
 
             ui.add_space(12.0);
 
