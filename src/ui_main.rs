@@ -38,6 +38,21 @@ impl std::fmt::Display for UnifiedColorMode {
     }
 }
 
+/// User-selected presentation state for the results area.
+pub struct ResultsViewState {
+    pub view_mode: ViewMode,
+    pub unified_color_mode: UnifiedColorMode,
+}
+
+impl Default for ResultsViewState {
+    fn default() -> Self {
+        Self {
+            view_mode: ViewMode::Split,
+            unified_color_mode: UnifiedColorMode::AvgRank,
+        }
+    }
+}
+
 // ── Header ──────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
@@ -361,8 +376,7 @@ pub fn render_results(
     model_name_a: Option<&str>,
     model_name_b: Option<&str>,
     height: f32,
-    view_mode: &mut ViewMode,
-    unified_color_mode: &mut UnifiedColorMode,
+    view: &mut ResultsViewState,
 ) {
     ui.add_space(16.0);
     ui.separator();
@@ -377,8 +391,8 @@ pub fn render_results(
     };
 
     // Force split view when tokenizers differ
-    if both && !tok_match && *view_mode == ViewMode::Unified {
-        *view_mode = ViewMode::Split;
+    if both && !tok_match && view.view_mode == ViewMode::Unified {
+        view.view_mode = ViewMode::Split;
     }
 
     if both {
@@ -396,23 +410,23 @@ pub fn render_results(
             );
             ui.add_space(4.0);
 
-            let split_selected = *view_mode == ViewMode::Split;
+            let split_selected = view.view_mode == ViewMode::Split;
 
             if ui
                 .selectable_label(split_selected, RichText::new("🔀 Split").size(12.0))
                 .clicked()
             {
-                *view_mode = ViewMode::Split;
+                view.view_mode = ViewMode::Split;
             }
 
             // Only allow unified view when tokenizers match
             if tok_match {
-                let unified_selected = *view_mode == ViewMode::Unified;
+                let unified_selected = view.view_mode == ViewMode::Unified;
                 if ui
                     .selectable_label(unified_selected, RichText::new("⊞ Unified").size(12.0))
                     .clicked()
                 {
-                    *view_mode = ViewMode::Unified;
+                    view.view_mode = ViewMode::Unified;
                 }
             } else {
                 ui.add_enabled_ui(false, |ui| {
@@ -421,7 +435,7 @@ pub fn render_results(
                 });
             }
 
-            if *view_mode == ViewMode::Unified {
+            if view.view_mode == ViewMode::Unified {
                 ui.add_space(16.0);
                 ui.label(
                     RichText::new("Color:")
@@ -429,26 +443,26 @@ pub fn render_results(
                         .color(colors::text_muted(ui.visuals())),
                 );
                 egui::ComboBox::from_id_salt("unified_color_mode")
-                    .selected_text(RichText::new(unified_color_mode.to_string()).size(12.0))
+                    .selected_text(RichText::new(view.unified_color_mode.to_string()).size(12.0))
                     .width(130.0)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
-                            unified_color_mode,
+                            &mut view.unified_color_mode,
                             UnifiedColorMode::AvgRank,
                             "Average rank",
                         );
                         ui.selectable_value(
-                            unified_color_mode,
+                            &mut view.unified_color_mode,
                             UnifiedColorMode::AvgProbability,
                             "Average probability",
                         );
                         ui.selectable_value(
-                            unified_color_mode,
+                            &mut view.unified_color_mode,
                             UnifiedColorMode::RankDivergence,
                             "Divergence rank",
                         );
                         ui.selectable_value(
-                            unified_color_mode,
+                            &mut view.unified_color_mode,
                             UnifiedColorMode::ProbDivergence,
                             "Divergence probability",
                         );
@@ -459,8 +473,8 @@ pub fn render_results(
     }
 
     // Legend (varies by mode)
-    if both && *view_mode == ViewMode::Unified {
-        match *unified_color_mode {
+    if both && view.view_mode == ViewMode::Unified {
+        match view.unified_color_mode {
             UnifiedColorMode::AvgProbability => render_prob_legend(ui),
             UnifiedColorMode::RankDivergence | UnifiedColorMode::ProbDivergence => {
                 render_divergence_legend(ui)
@@ -473,7 +487,7 @@ pub fn render_results(
     ui.add_space(12.0);
 
     if both {
-        if *view_mode == ViewMode::Unified {
+        if view.view_mode == ViewMode::Unified {
             render_unified_result(
                 ui,
                 result_a.unwrap(),
@@ -481,7 +495,7 @@ pub fn render_results(
                 model_name_a,
                 model_name_b,
                 height,
-                *unified_color_mode,
+                view.unified_color_mode,
             );
         } else {
             render_dual_results(

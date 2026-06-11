@@ -7,7 +7,6 @@ pub const RANK_POOR: Color32 = Color32::from_rgb(192, 132, 132);
 pub const RANK_VERY_POOR: Color32 = Color32::from_rgb(164, 112, 120);
 
 pub const ACCENT_PRIMARY: Color32 = Color32::from_rgb(139, 118, 173);
-pub const SUCCESS: Color32 = Color32::from_rgb(100, 161, 115);
 pub const WARNING: Color32 = Color32::from_rgb(184, 122, 68);
 pub const ERROR: Color32 = Color32::from_rgb(205, 115, 115);
 pub const INFO: Color32 = Color32::from_rgb(124, 156, 191);

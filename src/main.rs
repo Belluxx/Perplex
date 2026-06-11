@@ -10,7 +10,7 @@ mod worker;
 use eframe::egui;
 
 use crate::settings::{PreloadMode, Settings};
-use crate::ui_main::{UnifiedColorMode, ViewMode};
+use crate::ui_main::ResultsViewState;
 use crate::worker::{WorkerCommand, WorkerManager};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -77,8 +77,7 @@ struct PerplexApp {
     input_text: String,
     slots: [SlotState; 2],
     error_message: Option<String>,
-    view_mode: ViewMode,
-    unified_color_mode: UnifiedColorMode,
+    results_view: ResultsViewState,
     jit_phase: JitPhase,
     jit_pending_text: String,
 }
@@ -92,8 +91,7 @@ impl Default for PerplexApp {
             input_text: String::new(),
             slots: Default::default(),
             error_message: None,
-            view_mode: ViewMode::Split,
-            unified_color_mode: UnifiedColorMode::AvgRank,
+            results_view: ResultsViewState::default(),
             jit_phase: JitPhase::Idle,
             jit_pending_text: String::new(),
         }
@@ -104,8 +102,10 @@ impl PerplexApp {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let _ = env_logger::try_init();
 
-        let mut app = Self::default();
-        app.settings = Settings::load();
+        let mut app = Self {
+            settings: Settings::load(),
+            ..Self::default()
+        };
 
         app.apply_preload_policy();
         app
@@ -443,8 +443,7 @@ impl eframe::App for PerplexApp {
                         model_name_from_path(self.settings.model_path_a.as_deref()),
                         model_name_from_path(self.settings.model_path_b.as_deref()),
                         ui.available_height(),
-                        &mut self.view_mode,
-                        &mut self.unified_color_mode,
+                        &mut self.results_view,
                     );
                 } else if !self.is_busy() {
                     ui_main::render_empty_state(ui, self.has_any_model());
@@ -517,14 +516,10 @@ fn pick_gguf_model() -> Option<String> {
 pub fn model_name_from_path(path: Option<&str>) -> Option<&str> {
     // Remove final .gguf if present
     path.and_then(|p| {
-        let path = std::path::Path::new(p);
-        path.file_name().and_then(|n| n.to_str()).and_then(|n| {
-            if n.ends_with(".gguf") {
-                Some(&n[..n.len() - 5])
-            } else {
-                Some(n)
-            }
-        })
+        std::path::Path::new(p)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.strip_suffix(".gguf").unwrap_or(n))
     })
 }
 

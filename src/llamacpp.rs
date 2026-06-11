@@ -22,6 +22,26 @@ fn get_backend() -> Result<&'static LlamaBackend, String> {
 use crate::analysis::{AnalysisResult, AnalyzedToken};
 use crate::worker::{WorkerCommand, WorkerMessage};
 
+/// Prediction metrics for a single token position.
+#[derive(Clone)]
+struct TokenMetrics {
+    rank: usize,
+    probability: f32,
+    /// Top predicted (token id, probability) pairs.
+    top_predictions: Vec<(i32, f32)>,
+}
+
+impl TokenMetrics {
+    /// Placeholder for positions without a prediction (e.g. the first token).
+    fn unscored() -> Self {
+        Self {
+            rank: 1,
+            probability: 0.0,
+            top_predictions: Vec::new(),
+        }
+    }
+}
+
 pub struct LlamaAnalyzer {
     model: Option<LlamaModel>,
 }
@@ -54,10 +74,6 @@ impl LlamaAnalyzer {
         if self.model.take().is_some() {
             log::info!("Model unloaded, VRAM freed");
         }
-    }
-
-    pub fn is_loaded(&self) -> bool {
-        self.model.is_some()
     }
 
     fn model(&self) -> Result<&LlamaModel, String> {
@@ -113,8 +129,7 @@ impl LlamaAnalyzer {
             .new_context(backend, ctx_params)
             .map_err(|e| format!("Failed to create context: {}", e))?;
 
-        let mut compact_results: Vec<(usize, f32, Vec<(i32, f32)>)> =
-            Vec::with_capacity(total_tokens);
+        let mut compact_results: Vec<TokenMetrics> = Vec::with_capacity(total_tokens);
 
         let mut processed_count = 0;
 
@@ -161,13 +176,13 @@ impl LlamaAnalyzer {
                 let candidates = ctx.candidates_ith(i as i32);
                 logits.extend(candidates.map(|td| (td.id().0, td.logit())));
 
-                let (rank, prob, top_preds) = if let Some(next_tok) = next_token {
+                let metrics = if let Some(next_tok) = next_token {
                     Self::calculate_token_metrics(&logits, Some(next_tok))
                 } else {
-                    (1, 0.0, Vec::new())
+                    TokenMetrics::unscored()
                 };
 
-                compact_results.push((rank, prob, top_preds));
+                compact_results.push(metrics);
             }
 
             processed_count += chunk.len();
@@ -194,13 +209,14 @@ impl LlamaAnalyzer {
                     .token_to_piece(token, &mut decoder, true, None)
                     .unwrap_or_else(|_| format!("[{}]", token.0));
 
-                let (rank, prob, top_preds_raw) = if i == 0 {
-                    (1, 0.0, Vec::new())
+                let metrics = if i == 0 {
+                    TokenMetrics::unscored()
                 } else {
                     compact_results[i - 1].clone()
                 };
 
-                let top_predictions: Vec<(String, f32)> = top_preds_raw
+                let top_predictions: Vec<(String, f32)> = metrics
+                    .top_predictions
                     .into_iter()
                     .map(|(id, prob)| {
                         let pred_text = model
@@ -217,9 +233,9 @@ impl LlamaAnalyzer {
 
                 AnalyzedToken {
                     text: token_text,
-                    rank,
+                    rank: metrics.rank,
                     top_predictions,
-                    probability: prob,
+                    probability: metrics.probability,
                 }
             })
             .collect();
@@ -243,11 +259,11 @@ impl LlamaAnalyzer {
     fn calculate_token_metrics(
         logits: &[(i32, f32)],
         target_token: Option<llama_cpp_2::token::LlamaToken>,
-    ) -> (usize, f32, Vec<(i32, f32)>) {
+    ) -> TokenMetrics {
         const TOP_N: usize = 5;
 
         if logits.is_empty() {
-            return (1, 0.0, Vec::new());
+            return TokenMetrics::unscored();
         }
 
         let max_logit = logits
@@ -282,11 +298,16 @@ impl LlamaAnalyzer {
             top.truncate(TOP_N);
         }
 
-        let top_preds = top
+        let top_predictions = top
             .into_iter()
             .map(|(id, l)| (id, (l - max_logit).exp() / sum_exp))
             .collect();
-        (rank, probability, top_preds)
+
+        TokenMetrics {
+            rank,
+            probability,
+            top_predictions,
+        }
     }
 
     pub fn count_tokens(&self, text: &str) -> usize {
