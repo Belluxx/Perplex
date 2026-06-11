@@ -179,18 +179,18 @@ impl PerplexApp {
             self.jit_phase = JitPhase::RunningA;
             let path = self.settings.model_path_a.clone().unwrap();
             let a = &mut self.slots[ModelSlot::A.index()];
-            if !a.worker.has_model {
+            if a.worker.requested_path.as_ref() != Some(&path) {
                 a.worker.load_model(path);
             }
             // Queued after LoadModel — runs once loading completes.
             let _ = a.worker.send_command(WorkerCommand::Analyze(text));
         } else {
-            // Single model or parallel: send analyze to each ready/configured slot.
-            // If a model isn't loaded yet, load it first.
+            // Single model or parallel: send analyze to each configured slot,
+            // loading first unless the right model is already loaded/loading.
             for slot in ModelSlot::ALL {
                 if let Some(path) = self.model_path(slot).cloned() {
                     let s = &mut self.slots[slot.index()];
-                    if !s.worker.has_model && !s.worker.is_loading {
+                    if s.worker.requested_path.as_ref() != Some(&path) {
                         s.worker.load_model(path);
                     }
                     let _ = s.worker.send_command(WorkerCommand::Analyze(text.clone()));
@@ -226,7 +226,8 @@ impl PerplexApp {
                         self.slots[slot.index()].result = Some(result);
                         self.advance_jit_on_complete(slot);
                     }
-                    worker::WorkerMessage::Error(error) => {
+                    worker::WorkerMessage::Error(error)
+                    | worker::WorkerMessage::LoadError(error) => {
                         if self.jit_phase != JitPhase::Idle {
                             self.jit_phase = JitPhase::Idle;
                             self.jit_pending_text.clear();
@@ -296,17 +297,27 @@ impl PerplexApp {
     }
 
     /// Loads or unloads models to match the current preload policy.
+    /// Compares the configured path against the worker's requested path, so
+    /// changing a slot's model reloads it even when one is already loaded.
     fn apply_preload_policy(&mut self) {
         for slot in ModelSlot::ALL {
-            let should = self.should_preload(slot);
-            let has = self.slots[slot.index()].worker.has_model;
-            let loading = self.slots[slot.index()].worker.is_loading;
-            if should && !has && !loading {
-                if let Some(path) = self.model_path(slot).cloned() {
-                    self.slots[slot.index()].worker.load_model(path);
+            let desired = if self.should_preload(slot) {
+                self.model_path(slot).cloned()
+            } else {
+                None
+            };
+            let worker = &mut self.slots[slot.index()].worker;
+            match desired {
+                Some(path) => {
+                    if worker.requested_path.as_ref() != Some(&path) {
+                        worker.load_model(path);
+                    }
                 }
-            } else if !should && has {
-                self.slots[slot.index()].worker.unload_model();
+                None => {
+                    if worker.has_model || worker.is_loading {
+                        worker.unload_model();
+                    }
+                }
             }
         }
     }
@@ -470,9 +481,8 @@ impl eframe::App for PerplexApp {
                                     self.slots[slot.index()].result = None;
                                 }
                             } else {
-                                if self.model_path(slot).is_some() {
-                                    self.slots[slot.index()].worker.unload_model();
-                                }
+                                // apply_preload_policy unloads the worker once
+                                // the path is gone.
                                 *self.model_path_mut(slot) = None;
                                 self.slots[slot.index()].result = None;
                             }

@@ -7,13 +7,16 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::{mpsc, OnceLock};
 
-static LLAMA_BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
+static LLAMA_BACKEND: OnceLock<Result<LlamaBackend, String>> = OnceLock::new();
 
-fn get_backend() -> &'static LlamaBackend {
-    LLAMA_BACKEND.get_or_init(|| {
-        log::info!("Initializing Llama backend (one-time)...");
-        LlamaBackend::init().expect("Failed to initialize Llama backend")
-    })
+fn get_backend() -> Result<&'static LlamaBackend, String> {
+    LLAMA_BACKEND
+        .get_or_init(|| {
+            log::info!("Initializing Llama backend (one-time)...");
+            LlamaBackend::init().map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(|e| format!("Failed to initialize Llama backend: {}", e))
 }
 
 use crate::analysis::{AnalysisResult, AnalyzedToken};
@@ -33,7 +36,7 @@ impl LlamaAnalyzer {
         self.unload_model();
 
         let path_str = model_path.as_ref().to_string_lossy().to_string();
-        let backend = get_backend();
+        let backend = get_backend()?;
 
         log::info!("Loading model from: {}", path_str);
 
@@ -67,7 +70,7 @@ impl LlamaAnalyzer {
         progress_tx: Option<&mpsc::Sender<WorkerMessage>>,
     ) -> Result<AnalysisResult, String> {
         let model = self.model()?;
-        let backend = get_backend();
+        let backend = get_backend()?;
         let start_time = std::time::Instant::now();
 
         if let Some(tx) = progress_tx {
@@ -309,9 +312,7 @@ pub fn run_worker(
                         let _ = msg_tx.send(WorkerMessage::ModelLoaded);
                     }
                     Err(e) => {
-                        let _ = msg_tx.send(WorkerMessage::Error(
-                            format!("Failed to load model: {}", e),
-                        ));
+                        let _ = msg_tx.send(WorkerMessage::LoadError(e));
                     }
                 }
             }

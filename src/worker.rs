@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
 
 use crate::analysis::AnalysisResult;
@@ -11,6 +11,8 @@ pub enum WorkerMessage {
     Progress { current: usize, total: usize },
     Completed(AnalysisResult),
     TokenCount(usize),
+    /// Loading a model failed; the worker is left without a model.
+    LoadError(String),
     Error(String),
 }
 
@@ -36,6 +38,7 @@ pub struct WorkerManager {
     pub is_analyzing: bool,
     pub progress: Option<f32>,
     pub has_model: bool,
+    pub requested_path: Option<String>,
 }
 
 impl WorkerManager {
@@ -56,6 +59,7 @@ impl WorkerManager {
             is_analyzing: false,
             progress: None,
             has_model: false,
+            requested_path: None,
         }
     }
 
@@ -64,6 +68,7 @@ impl WorkerManager {
         self.is_loading = true;
         self.is_analyzing = false;
         self.progress = None;
+        self.requested_path = Some(path.clone());
 
         if let Some(ref tx) = self.tx {
             let _ = tx.send(WorkerCommand::LoadModel(path));
@@ -76,6 +81,7 @@ impl WorkerManager {
             let _ = tx.send(WorkerCommand::UnloadModel);
         }
         self.has_model = false;
+        self.requested_path = None;
     }
 
     /// Sends a command to the worker thread. Returns an error if no worker is active.
@@ -95,37 +101,70 @@ impl WorkerManager {
     /// (e.g. storing results, displaying errors).
     pub fn poll_messages(&mut self) -> Vec<WorkerMessage> {
         let mut messages = Vec::new();
+        let mut disconnected = false;
 
         if let Some(ref rx) = self.rx {
-            while let Ok(msg) = rx.try_recv() {
-                match &msg {
-                    WorkerMessage::ModelLoaded => {
-                        self.is_loading = false;
-                        self.has_model = true;
+            loop {
+                match rx.try_recv() {
+                    Ok(msg) => {
+                        match &msg {
+                            WorkerMessage::ModelLoaded => {
+                                self.is_loading = false;
+                                self.has_model = true;
+                            }
+                            WorkerMessage::ModelUnloaded => {
+                                self.has_model = false;
+                            }
+                            WorkerMessage::Started => {
+                                self.is_analyzing = true;
+                                self.progress = Some(0.0);
+                            }
+                            WorkerMessage::Progress { current, total } => {
+                                self.progress = Some(*current as f32 / (*total).max(1) as f32);
+                            }
+                            WorkerMessage::Completed(_) => {
+                                self.is_analyzing = false;
+                                self.progress = None;
+                            }
+                            WorkerMessage::LoadError(_) => {
+                                // The analyzer drops any previous model before
+                                // loading, so a failed load leaves the worker
+                                // without a model.
+                                self.is_loading = false;
+                                self.has_model = false;
+                                self.requested_path = None;
+                                self.progress = None;
+                            }
+                            WorkerMessage::Error(_) => {
+                                self.is_analyzing = false;
+                                self.is_loading = false;
+                                self.progress = None;
+                            }
+                            WorkerMessage::TokenCount(_) => {}
+                        }
+                        messages.push(msg);
                     }
-                    WorkerMessage::ModelUnloaded => {
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        // Worker thread is gone (likely panicked)
+                        self.is_loading = false;
+                        self.is_analyzing = false;
+                        self.progress = None;
                         self.has_model = false;
+                        self.requested_path = None;
+                        messages.push(WorkerMessage::Error(
+                            "Worker thread terminated unexpectedly".to_string(),
+                        ));
+                        disconnected = true;
+                        break;
                     }
-                    WorkerMessage::Started => {
-                        self.is_analyzing = true;
-                        self.progress = Some(0.0);
-                    }
-                    WorkerMessage::Progress { current, total } => {
-                        self.progress = Some(*current as f32 / (*total).max(1) as f32);
-                    }
-                    WorkerMessage::Completed(_) => {
-                        self.is_analyzing = false;
-                        self.progress = None;
-                    }
-                    WorkerMessage::Error(_) => {
-                        self.is_analyzing = false;
-                        self.is_loading = false;
-                        self.progress = None;
-                    }
-                    WorkerMessage::TokenCount(_) => {}
                 }
-                messages.push(msg);
             }
+        }
+
+        if disconnected {
+            self.rx = None;
+            self.tx = None;
         }
 
         messages
@@ -146,5 +185,6 @@ impl WorkerManager {
         }
         self.rx = None;
         self.has_model = false;
+        self.requested_path = None;
     }
 }
