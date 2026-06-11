@@ -162,7 +162,7 @@ impl LlamaAnalyzer {
                 logits.extend(candidates.map(|td| (td.id().0, td.logit())));
 
                 let (rank, prob, top_preds) = if let Some(next_tok) = next_token {
-                    Self::calculate_token_metrics(&mut logits, Some(next_tok))
+                    Self::calculate_token_metrics(&logits, Some(next_tok))
                 } else {
                     (1, 0.0, Vec::new())
                 };
@@ -241,9 +241,11 @@ impl LlamaAnalyzer {
     // Calculates rank, probability and top predictions for the target token
     // using the raw logits. Performs a Softmax with the "max-trick" for numerical stability.
     fn calculate_token_metrics(
-        logits: &mut [(i32, f32)],
+        logits: &[(i32, f32)],
         target_token: Option<llama_cpp_2::token::LlamaToken>,
     ) -> (usize, f32, Vec<(i32, f32)>) {
+        const TOP_N: usize = 5;
+
         if logits.is_empty() {
             return (1, 0.0, Vec::new());
         }
@@ -255,28 +257,34 @@ impl LlamaAnalyzer {
 
         let sum_exp: f32 = logits.iter().map(|(_, l)| (l - max_logit).exp()).sum();
 
-        logits.sort_unstable_by(|(_, a), (_, b)| {
-            b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
-        });
-
         let mut rank = 1;
         let mut probability = 0.0;
 
         if let Some(target) = target_token {
             let target_id = target.0;
 
-            if let Some(idx) = logits.iter().position(|(id, _)| *id == target_id) {
-                rank = idx + 1;
-                let val = logits[idx].1;
-
-                probability = (val - max_logit).exp() / sum_exp;
+            if let Some(&(_, target_logit)) = logits.iter().find(|(id, _)| *id == target_id) {
+                rank = 1 + logits.iter().filter(|(_, l)| *l > target_logit).count();
+                probability = (target_logit - max_logit).exp() / sum_exp;
             }
         }
 
-        let top_preds = logits
-            .iter()
-            .take(5)
-            .map(|(id, l)| (*id, (l - max_logit).exp() / sum_exp))
+        let mut top: Vec<(i32, f32)> = Vec::with_capacity(TOP_N + 1);
+        for &(id, l) in logits {
+            if top.len() == TOP_N && l <= top[TOP_N - 1].1 {
+                continue;
+            }
+            let pos = top
+                .iter()
+                .position(|&(_, tl)| l > tl)
+                .unwrap_or(top.len());
+            top.insert(pos, (id, l));
+            top.truncate(TOP_N);
+        }
+
+        let top_preds = top
+            .into_iter()
+            .map(|(id, l)| (id, (l - max_logit).exp() / sum_exp))
             .collect();
         (rank, probability, top_preds)
     }
